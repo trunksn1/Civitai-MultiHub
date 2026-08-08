@@ -33,8 +33,6 @@ folder, and then load that folder.
 
 ![Download the MultiHub ZIP from the Release assets](docs/images/01-download-release.svg)
 
-![Extract the ZIP wherever you like]
-
 ![In Chrome -> Manage Extension -> Enable Developer mode and select Load unpacked](docs/images/03-load-unpacked.svg)
 
 ![Select the extracted MultiHub folder](docs/images/04-select-folder.svg)
