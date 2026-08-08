@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650">
+  <rect width="1200" height="650" fill="#eef2f6"/>
+  <rect x="65" y="55" width="1070" height="545" rx="12" fill="#fff" stroke="#b9c2cc" stroke-width="3"/>
+  <rect x="65" y="55" width="1070" height="65" rx="12" fill="#e8edf3"/>
+  <text x="105" y="98" font-family="Segoe UI,Arial" font-size="27" font-weight="700" fill="#202124">Documents ? MultiHub</text>
+  <rect x="95" y="150" width="1010" height="64" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+  <text x="135" y="191" font-family="Consolas,monospace" font-size="26" font-weight="700" fill="#1d4ed8">manifest.json</text>
+  <text x="770" y="191" font-family="Segoe UI,Arial" font-size="22" fill="#475569">JSON file</text>
+  <text x="135" y="265" font-family="Consolas,monospace" font-size="24" fill="#334155">background.js</text>
+  <text x="135" y="320" font-family="Consolas,monospace" font-size="24" fill="#334155">feed.html</text>
+  <text x="135" y="375" font-family="Consolas,monospace" font-size="24" fill="#334155">feed.js</text>
+  <text x="135" y="430" font-family="Consolas,monospace" font-size="24" fill="#334155">icons</text>
+  <rect x="675" y="255" width="380" height="125" rx="12" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"/>
+  <text x="710" y="305" font-family="Segoe UI,Arial" font-size="25" font-weight="700" fill="#166534">Select this folder</text>
+  <text x="710" y="345" font-family="Segoe UI,Arial" font-size="22" fill="#166534">manifest.json is directly inside</text>
+  <text x="105" y="555" font-family="Segoe UI,Arial" font-size="23" font-weight="700" fill="#b42318">Keep this extracted folder: Chrome loads MultiHub from here.</text>
+</svg>

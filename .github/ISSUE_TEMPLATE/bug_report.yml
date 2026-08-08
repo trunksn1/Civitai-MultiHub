@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible MultiHub problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include API keys, cookies, authorization headers, browser storage, or private hub data.
+  - type: input
+    id: version
+    attributes:
+      label: MultiHub version
+      placeholder: 0.12.0
+    validations:
+      required: true
+  - type: input
+    id: chrome
+    attributes:
+      label: Chrome version and operating system
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Civitai host
+      options:
+        - civitai.com
+        - civitai.red
+        - Standalone MultiHub tab
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Explain what you did, what happened, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Add redacted screenshots or error text if useful.

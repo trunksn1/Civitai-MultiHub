@@ -1,0 +1,35 @@
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Packaging and dependencies
+*.zip
+*.crx
+*.pem
+dist/
+node_modules/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.token
+secrets.*
+
+# Private local working material
+/private-notes/
+/*.local.md
+/suggestion.md
+/android/
+/extension/icons/ChatGPT Image *.png
+
+# Local assistant/tooling state
+.claude/
+.agents/
+.codex/
+.codex-remote-attachments/

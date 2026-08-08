@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650">
+  <rect width="1200" height="650" fill="#f1f3f4"/>
+  <rect x="0" y="0" width="1200" height="76" fill="#fff"/>
+  <text x="70" y="49" font-family="Segoe UI,Arial" font-size="30" fill="#202124">Extensions</text>
+  <text x="895" y="47" font-family="Segoe UI,Arial" font-size="23" font-weight="700" fill="#202124">Developer mode</text>
+  <rect x="1070" y="23" width="70" height="34" rx="17" fill="#1a73e8"/>
+  <circle cx="1122" cy="40" r="14" fill="#fff"/>
+  <rect x="70" y="115" width="225" height="58" rx="28" fill="#dbeafe" stroke="#1a73e8" stroke-width="4"/>
+  <text x="98" y="152" font-family="Segoe UI,Arial" font-size="24" font-weight="700" fill="#174ea6">Load unpacked</text>
+  <rect x="325" y="115" width="205" height="58" rx="28" fill="#fff" stroke="#9aa0a6" stroke-width="2"/>
+  <text x="357" y="152" font-family="Segoe UI,Arial" font-size="23" fill="#3c4043">Pack extension</text>
+  <rect x="70" y="220" width="500" height="300" rx="14" fill="#fff" stroke="#dadce0" stroke-width="2"/>
+  <text x="110" y="285" font-family="Segoe UI,Arial" font-size="28" font-weight="700" fill="#202124">MultiHub for Civitai - Unofficial</text>
+  <text x="110" y="330" font-family="Segoe UI,Arial" font-size="22" fill="#5f6368">Create combined Civitai media feeds</text>
+  <text x="110" y="385" font-family="Segoe UI,Arial" font-size="20" fill="#5f6368">Version 0.12.0</text>
+  <rect x="470" y="465" width="64" height="32" rx="16" fill="#1a73e8"/>
+  <circle cx="518" cy="481" r="13" fill="#fff"/>
+  <path d="M890 105C760 135 550 140 305 144" fill="none" stroke="#ea4335" stroke-width="6" marker-end="url(#arrow)"/>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ea4335"/></marker></defs>
+  <text x="690" y="93" font-family="Segoe UI,Arial" font-size="24" font-weight="700" fill="#b42318">1. Enable Developer mode</text>
+  <text x="690" y="575" font-family="Segoe UI,Arial" font-size="24" font-weight="700" fill="#174ea6">2. Select Load unpacked</text>
+</svg>

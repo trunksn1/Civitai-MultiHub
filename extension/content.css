@@ -1,0 +1,133 @@
+#cmh-widget {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: system-ui, sans-serif;
+}
+
+#cmh-widget .cmh-btn {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid #4c6ef5;
+  background: #1b1b24;
+  color: #e6e6ee;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+#cmh-widget .cmh-btn:hover {
+  background: #4c6ef5;
+}
+
+#cmh-widget .cmh-add {
+  border-color: #37b24d;
+}
+
+#cmh-widget .cmh-add:hover {
+  background: #37b24d;
+}
+
+#cmh-widget .cmh-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid #34344a;
+  background: #1b1b24;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+#cmh-widget .cmh-menu-title {
+  padding: 4px 12px 2px;
+  color: #909296;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#cmh-widget .cmh-menu[hidden] { display: none; }
+
+#cmh-widget .cmh-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#cmh-widget .cmh-menu-header .cmh-menu-title { flex: 1; }
+
+#cmh-widget .cmh-menu-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #adb5bd;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#cmh-widget .cmh-menu-close:hover { background: #34344a; color: #fff; }
+
+#cmh-widget .cmh-menu-item {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e6e6ee;
+  font-size: 13px;
+  text-align: right;
+  cursor: pointer;
+}
+
+#cmh-widget .cmh-menu-item:hover {
+  background: #4c6ef5;
+}
+
+#cmh-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Above ordinary page content, below Civitai header popovers/search/account menus. */
+  z-index: 90;
+  background: #1a1b1e;
+  border-top: 1px solid #373a40;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
+}
+
+#cmh-overlay[hidden] { display: none; }
+
+/* Civitai's browsing-mode popover — the control that owns the browsing level —
+   asks for `z-index: calc(var(--dialog-z-index) + 2)`, but that variable only
+   exists while one of their dialogs is open. Anywhere else the declaration is
+   invalid, so the dropdown falls back to `z-index: auto` and opens *underneath*
+   this panel. Supplying the value the site itself intends (its Popover asks for
+   302) puts their menu back on top, and only while the panel is open, so nothing
+   is changed for the site on its own. A dialog that sets the variable on its own
+   subtree still wins there. */
+:root[data-cmh-panel="open"] { --dialog-z-index: 300; }
+
+#cmh-overlay iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #1a1b1e;
+}
+
+#cmh-nav-item.cmh-active {
+  color: #74c0fc !important;
+}

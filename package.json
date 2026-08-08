@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/storage.test.js && node test/merge.test.js && node test/action-state.test.js && node test/api.test.js && node test/release-build.test.js",
+    "build:chrome": "node scripts/build-release.mjs chrome",
+    "build:full": "node scripts/build-release.mjs full",
+    "build:all": "node scripts/build-release.mjs all",
+    "verify:packages": "node scripts/verify-release.mjs all"
+  }
+}
