@@ -14,9 +14,11 @@ MultiHub works in a standalone Chrome tab or directly below the Civitai header o
 > affiliated with or endorsed by Civitai. Installation currently uses Chrome's **Load unpacked**
 > developer workflow, so updates are manual.
 
-**[Install](#install-in-chrome)** ? **[Quick start](#quick-start)** ?
-**[Features](docs/FEATURES.md)** ? **[Privacy](PRIVACY.md)** ?
-**[Security](SECURITY.md)** ? **[Report a bug](https://github.com/trunksn1/Civitai-MultiHub/issues)**
+![MultiHub running directly inside Civitai](docs/images/extension-inside-civitai.png)
+
+**[Install](#install-in-chrome)** | **[Quick start](#quick-start)** |
+**[Features](docs/FEATURES.md)** | **[Privacy](PRIVACY.md)** |
+**[Security](SECURITY.md)** | **[Report a bug](https://github.com/trunksn1/Civitai-MultiHub/issues)**
 
 ## Install in Chrome
 
@@ -26,17 +28,16 @@ folder, and then load that folder.
 1. Open the [latest Release](https://github.com/trunksn1/Civitai-MultiHub/releases/latest).
 2. Under **Assets**, download `civitai-multihub-full-v0.12.0.zip`.
    Do **not** download GitHub's automatic `Source code` archives.
+3. Extract the ZIP. Confirm that `manifest.json` is directly inside the extracted folder.
+4. Open `chrome://extensions` in Chrome and enable **Developer mode**.
+5. Select **Load unpacked** and choose the extracted folder containing `manifest.json`.
+6. Refresh every Civitai tab that was already open.
+
 ![Download the MultiHub ZIP from the Release assets](docs/images/01-download-release.svg)
-4. Extract the ZIP. Confirm that `manifest.json` is directly inside the extracted folder.
-5. Open `chrome://extensions` in Chrome and enable **Developer mode**.
-6. Select **Load unpacked** and choose the extracted folder containing `manifest.json`.
-![In Chrome -> Manage Extension -> Enable Developer mode and select Load unpacked](docs/images/03-load-unpacked.svg)
+
+![In Chrome, open Manage Extensions, enable Developer mode, and select Load unpacked](docs/images/03-load-unpacked.svg)
+
 ![Select the extracted MultiHub folder](docs/images/04-select-folder.svg)
-7. Refresh every Civitai tab that was already open.
-
-
-
-
 
 For checksum commands, updates, removal, and troubleshooting, see the
 **[complete installation guide](docs/INSTALLATION.md)**.
@@ -48,6 +49,8 @@ For checksum commands, updates, removal, and troubleshooting, see the
 3. Add a creator name, model ID, Civitai creator/model URL, or public image-collection URL.
 4. Choose specific model versions when prompted, then select sorting and display filters.
 5. Scroll the combined feed. Opening an item shows media details and the available Civitai actions.
+
+![Build a hub from mixed creators, models, versions, and collections](docs/images/hubs-sources-filters.png)
 
 ## Main features
 
@@ -127,4 +130,4 @@ do not place secrets or exploit details in a public issue.
 
 ## License
 
-[MIT](LICENSE) ? 2026 Civitai MultiHub contributors.
+[MIT](LICENSE) | Copyright 2026 Civitai MultiHub contributors.
