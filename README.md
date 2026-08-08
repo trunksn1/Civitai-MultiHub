@@ -31,13 +31,12 @@ folder, and then load that folder.
 5. Open `chrome://extensions` in Chrome and enable **Developer mode**.
 6. Select **Load unpacked** and choose the extracted folder containing `manifest.json`.
 ![In Chrome -> Manage Extension -> Enable Developer mode and select Load unpacked](docs/images/03-load-unpacked.svg)
-8. Refresh every Civitai tab that was already open.
-
-
-
-
-
 ![Select the extracted MultiHub folder](docs/images/04-select-folder.svg)
+7. Refresh every Civitai tab that was already open.
+
+
+
+
 
 For checksum commands, updates, removal, and troubleshooting, see the
 **[complete installation guide](docs/INSTALLATION.md)**.
