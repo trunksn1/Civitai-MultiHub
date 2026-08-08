@@ -26,14 +26,16 @@ folder, and then load that folder.
 1. Open the [latest Release](https://github.com/trunksn1/Civitai-MultiHub/releases/latest).
 2. Under **Assets**, download `civitai-multihub-full-v0.12.0.zip`.
    Do **not** download GitHub's automatic `Source code` archives.
-3. Extract the ZIP. Confirm that `manifest.json` is directly inside the extracted folder.
-4. Open `chrome://extensions` in Chrome and enable **Developer mode**.
-5. Select **Load unpacked** and choose the extracted folder containing `manifest.json`.
-6. Refresh every Civitai tab that was already open.
-
 ![Download the MultiHub ZIP from the Release assets](docs/images/01-download-release.svg)
-
+4. Extract the ZIP. Confirm that `manifest.json` is directly inside the extracted folder.
+5. Open `chrome://extensions` in Chrome and enable **Developer mode**.
+6. Select **Load unpacked** and choose the extracted folder containing `manifest.json`.
 ![In Chrome -> Manage Extension -> Enable Developer mode and select Load unpacked](docs/images/03-load-unpacked.svg)
+8. Refresh every Civitai tab that was already open.
+
+
+
+
 
 ![Select the extracted MultiHub folder](docs/images/04-select-folder.svg)
 
