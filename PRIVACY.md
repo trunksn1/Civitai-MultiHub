@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 8 August 2026
+Last updated: 11 August 2026
 
 ## Overview
 
@@ -9,8 +9,10 @@ from Civitai. The project does not operate an analytics, advertising, account, o
 server. Extension data stays in the user's browser except for requests that must be sent directly
 to Civitai to provide the requested functionality.
 
-This policy describes the current full GitHub build. Store-specific builds may disable features
-or reduce the permitted content range; their store listings will identify those differences.
+The Chrome Web Store and Firefox Add-ons packages request access only to `civitai.com` and permit
+only its PG/PG-13 browsing range. They do not request access to `civitai.red`. The complete GitHub
+and manual-install package also supports `civitai.red` and its wider user-selected browsing range.
+The data flows described below are otherwise the same unless a section says otherwise.
 
 ## Data stored in the browser
 
@@ -91,6 +93,11 @@ of those requests.
 The project developer does not sell, rent, share, or use extension data for advertising, credit,
 profiling, or analytics. MultiHub communicates only with the Civitai website/API and Civitai-hosted
 media services required for its user-facing features.
+
+MultiHub's use of information received from browser APIs adheres to the Chrome Web Store User Data
+Policy, including the Limited Use requirements. Data is used only to provide or improve the
+extension's single purpose and user-facing features; it is not transferred for unrelated purposes
+or made available for human reading by the developer.
 
 ## Hub exports
 
