@@ -1,11 +1,12 @@
 import {
   openSourceStreams, fetchStreamPage, resolveModel, thumbnailUrl, setCacheBuster,
-  clearModelCache, resolveModelVersion, resolveCollection, resolveImageGenerationData, resolveImageComments,
+  clearModelCache, resolveModelVersion, resolveCreatorProfile, resolveCollection,
+  resolveImageGenerationData, resolveImageComments,
   toggleImageReaction,
   resolveWritableCollections, addImageToCollection,
   postComment,
   explainCivitaiError, resetCivitaiCapabilities,
-  resolveAccountBrowsingLevels, maskFromLevels, userAvatarUrl,
+  resolveAccountBrowsingLevels, maskFromLevels, userAvatarUrl, imageBuzzAmount,
   BROWSING_LEVEL_VALUES, BROWSING_LEVEL_LABELS,
 } from "./civitai-api.js";
 import { beginOptimisticReaction } from "./action-state.js";
@@ -13,12 +14,22 @@ import { getComparator, hasFrontier } from "./merge.js";
 import {
   loadConfig, saveConfig, activeFeed, makeFeed,
   parseSourceInput, mergeSourceIntoFeed, exportFeed, importFeed,
+  MAX_HUBS,
 } from "./storage.js";
+import {
+  ALLOWED_CIVITAI_HOSTS,
+  isAllowedCivitaiHost,
+} from "./distribution.js";
+import {
+  generationContentSignals,
+  isUnviewedNewImage,
+  matchesGenerationFilters,
+} from "./content-filters.js";
 
 const BATCH = 30; // images revealed per scroll step
 const pageParams = new URLSearchParams(location.search);
 const requestedHost = pageParams.get("embedded") === "1" ? pageParams.get("host") : null;
-const embeddedHost = ["civitai.com", "civitai.red"].includes(requestedHost)
+const embeddedHost = isAllowedCivitaiHost(requestedHost)
   ? requestedHost : null;
 const BASE_MODEL_LINKS = {
   OpenAI: {
@@ -55,11 +66,17 @@ let viewedSaveTimer;
 const versionMetadataQueue = [];
 let accountBrowsingReason = null; // how the level was established, for the sidebar note
 let versionMetadataActive = 0;
+const creatorProfileQueue = [];
+let creatorProfileActive = 0;
 let collectionPickerItem = null;
 const pendingReactionActions = new Set();
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
+
+for (const option of [...$("link-domain").options]) {
+  if (!ALLOWED_CIVITAI_HOSTS.has(option.value)) option.remove();
+}
 
 function queuedModelVersion(versionId) {
   return new Promise((resolve, reject) => {
@@ -84,6 +101,7 @@ function pumpVersionMetadata() {
 function cancelQueuedVersionMetadata() {
   const error = new DOMException("Feed run replaced", "AbortError");
   while (versionMetadataQueue.length > 0) versionMetadataQueue.shift().reject(error);
+  while (creatorProfileQueue.length > 0) creatorProfileQueue.shift().reject(error);
 }
 
 function setStatus(msg) {
@@ -254,6 +272,311 @@ function sourceGroup(source) {
   if (label.includes("checkpoint")) return "Checkpoints";
   return "Models";
 }
+
+function queuedCreatorProfile(username) {
+  return new Promise((resolve, reject) => {
+    creatorProfileQueue.push({ username, resolve, reject, signal: runController?.signal });
+    pumpCreatorProfiles();
+  });
+}
+
+function pumpCreatorProfiles() {
+  while (creatorProfileActive < 3 && creatorProfileQueue.length > 0) {
+    const job = creatorProfileQueue.shift();
+    creatorProfileActive += 1;
+    resolveCreatorProfile(job.username, effectiveApiSettings(), job.signal)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        creatorProfileActive -= 1;
+        pumpCreatorProfiles();
+      });
+  }
+}
+
+function modelDraftFromPath(path, label = "") {
+  const match = String(path || "").match(/\/models\/(\d+)/i);
+  if (!match) return null;
+  const draft = { type: "model", modelId: Number(match[1]) };
+  if (label) draft.label = label;
+  const versionMatch = String(path).match(/[?&]modelVersionId=(\d+)/i);
+  if (versionMatch) draft.versionIds = [Number(versionMatch[1])];
+  return draft;
+}
+
+function collectionDraftFromPath(path, label = "") {
+  const match = String(path || "").match(/\/collections\/(\d+)/i);
+  if (!match) return null;
+  return { type: "collection", collectionId: Number(match[1]), ...(label ? { label } : {}) };
+}
+
+function sourceDraftKey(draft) {
+  if (draft.type === "user") return `user:${draft.username.toLocaleLowerCase()}`;
+  if (draft.type === "collection") return `collection:${draft.collectionId}`;
+  return `model:${draft.modelId}:${(draft.versionIds || []).join(",")}`;
+}
+
+function uniqueSourceOptions(options) {
+  const seen = new Set();
+  return options.filter(({ draft }) => {
+    if (!draft) return false;
+    const key = sourceDraftKey(draft);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function itemSourceOptions(item) {
+  const options = [];
+  if (item.username) {
+    options.push({
+      label: `@${item.username}`,
+      draft: { type: "user", username: item.username },
+    });
+  }
+  for (const label of item._sources || []) {
+    const path = sourceLinks[label] || "";
+    const draft = sourceKinds[label] === "model"
+      ? modelDraftFromPath(path, label)
+      : sourceKinds[label] === "collection" ? collectionDraftFromPath(path, label) : null;
+    if (draft) options.push({ label, draft });
+  }
+  for (const resource of item._generationResources || []) {
+    if (!Number.isSafeInteger(Number(resource?.modelId))) continue;
+    const label = resource.modelName || resource.name || `Model #${resource.modelId}`;
+    options.push({
+      label,
+      draft: { type: "model", modelId: Number(resource.modelId), label },
+    });
+  }
+  const unresolved = [...new Set(item.modelVersionIds || [])]
+    .filter((versionId) => Number.isSafeInteger(Number(versionId)) && Number(versionId) > 0)
+    .slice(0, 10);
+  const resolved = await Promise.allSettled(unresolved.map((versionId) => queuedModelVersion(versionId)));
+  for (const result of resolved) {
+    if (result.status !== "fulfilled" || !result.value?.modelId) continue;
+    const label = result.value.name || `Model #${result.value.modelId}`;
+    options.push({
+      label,
+      draft: { type: "model", modelId: Number(result.value.modelId), label },
+    });
+  }
+  return uniqueSourceOptions(options).slice(0, 12);
+}
+
+const sourceHoverMenu = document.createElement("div");
+sourceHoverMenu.className = "source-hover-menu";
+sourceHoverMenu.hidden = true;
+sourceHoverMenu.setAttribute("role", "menu");
+document.body.append(sourceHoverMenu);
+let sourceHoverTarget = null;
+let sourceHoverCloseTimer = null;
+let sourceHoverRequest = 0;
+
+function closeSourceHoverMenu() {
+  clearTimeout(sourceHoverCloseTimer);
+  sourceHoverMenu.hidden = true;
+  sourceHoverMenu.replaceChildren();
+  sourceHoverTarget = null;
+  sourceHoverRequest += 1;
+}
+
+function scheduleSourceHoverClose() {
+  clearTimeout(sourceHoverCloseTimer);
+  sourceHoverCloseTimer = setTimeout(closeSourceHoverMenu, 220);
+}
+
+function positionSourceHoverMenu(target) {
+  const rect = target.getBoundingClientRect();
+  sourceHoverMenu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - 300))}px`;
+  sourceHoverMenu.style.top = `${Math.min(innerHeight - 12, rect.bottom + 5)}px`;
+  requestAnimationFrame(() => {
+    if (sourceHoverMenu.hidden) return;
+    const menuRect = sourceHoverMenu.getBoundingClientRect();
+    if (menuRect.bottom > innerHeight - 8) {
+      sourceHoverMenu.style.top = `${Math.max(8, rect.top - menuRect.height - 5)}px`;
+    }
+  });
+}
+
+async function addSourceFromHover(draft, hub) {
+  const result = mergeSourceIntoFeed(hub, draft);
+  await saveConfig(config);
+  renderHubs();
+  if (hub.id === feed().id) renderSources();
+  const message = result.status === "duplicate"
+    ? `${sourceLabel(draft)} is already in “${hub.name}”.`
+    : result.status === "merged"
+      ? `${sourceLabel(draft)} was updated in “${hub.name}”.`
+      : `${sourceLabel(draft)} was added to “${hub.name}”.`;
+  setStatus(message);
+  closeSourceHoverMenu();
+  if (hub.id === feed().id && result.status !== "duplicate") startFeed();
+}
+
+function sortedHubs() {
+  return [...config.feeds].sort((a, b) => a.name.localeCompare(b.name, undefined, {
+    sensitivity: "base", numeric: true,
+  }));
+}
+
+function sourceHoverDivider(text) {
+  const divider = document.createElement("div");
+  divider.className = "source-hover-divider";
+  divider.textContent = text;
+  return divider;
+}
+
+function renderSourceHubChoices(draft, label, options, target) {
+  sourceHoverMenu.replaceChildren();
+  const header = document.createElement("div");
+  header.className = "source-hover-header";
+  if (options.length > 1) {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.textContent = "‹";
+    back.title = "Choose another source";
+    back.addEventListener("click", () => renderSourceChoices(options, target));
+    header.append(back);
+  }
+  const title = document.createElement("strong");
+  title.textContent = label;
+  header.append(title);
+  sourceHoverMenu.append(header);
+
+  const create = document.createElement("button");
+  create.type = "button";
+  create.className = "source-hover-item source-hover-create";
+  create.textContent = "＋ Create a new hub";
+  const createForm = document.createElement("form");
+  createForm.className = "source-hover-create-form";
+  createForm.hidden = true;
+  const createInput = document.createElement("input");
+  createInput.type = "text";
+  createInput.maxLength = 80;
+  createInput.required = true;
+  createInput.placeholder = "New hub name";
+  createInput.addEventListener("input", () => createInput.setCustomValidity(""));
+  const createSubmit = document.createElement("button");
+  createSubmit.type = "submit";
+  createSubmit.textContent = "Create and add";
+  createForm.append(createInput, createSubmit);
+  create.addEventListener("click", () => {
+    create.hidden = true;
+    createForm.hidden = false;
+    createInput.focus();
+  });
+  createForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (config.feeds.length >= MAX_HUBS) {
+      createInput.setCustomValidity(`MultiHub supports at most ${MAX_HUBS} hubs`);
+      return createInput.reportValidity();
+    }
+    try {
+      const hub = makeFeed(createInput.value);
+      config.feeds.push(hub);
+      createInput.disabled = true;
+      createSubmit.disabled = true;
+      try {
+        await addSourceFromHover(draft, hub);
+      } catch (error) {
+        config.feeds = config.feeds.filter((candidate) => candidate.id !== hub.id);
+        throw error;
+      }
+    } catch (error) {
+      createInput.disabled = false;
+      createSubmit.disabled = false;
+      createInput.setCustomValidity(error.message || "Could not create the hub");
+      createInput.reportValidity();
+    }
+  });
+  sourceHoverMenu.append(create, createForm, sourceHoverDivider("Existing hubs"));
+
+  const search = document.createElement("input");
+  search.className = "source-hover-search";
+  search.type = "search";
+  search.placeholder = "Search hubs…";
+  search.setAttribute("aria-label", "Search existing hubs");
+  const list = document.createElement("div");
+  list.className = "source-hover-hub-list";
+  const hubs = sortedHubs();
+  const draw = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    const visible = hubs.filter((hub) => hub.name.toLocaleLowerCase().includes(query));
+    list.replaceChildren(...visible.map((hub) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "source-hover-item";
+      button.textContent = `＋ ${hub.name}`;
+      button.addEventListener("click", () => addSourceFromHover(draft, hub));
+      return button;
+    }));
+    if (visible.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "source-hover-empty";
+      empty.textContent = "No matching hub.";
+      list.append(empty);
+    }
+  };
+  search.addEventListener("input", draw);
+  draw();
+  sourceHoverMenu.append(search, list);
+}
+
+function renderSourceChoices(options, target) {
+  sourceHoverMenu.replaceChildren();
+  const title = document.createElement("strong");
+  title.className = "source-hover-title";
+  title.textContent = "Add which source?";
+  sourceHoverMenu.append(title);
+  for (const option of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "source-hover-item";
+    button.textContent = option.label;
+    button.addEventListener("click", () =>
+      renderSourceHubChoices(option.draft, option.label, options, target)
+    );
+    sourceHoverMenu.append(button);
+  }
+}
+
+async function showSourceHoverMenu(target, optionLoader) {
+  clearTimeout(sourceHoverCloseTimer);
+  const request = ++sourceHoverRequest;
+  sourceHoverTarget = target;
+  sourceHoverMenu.hidden = false;
+  sourceHoverMenu.textContent = "Loading sources…";
+  positionSourceHoverMenu(target);
+  const loaded = typeof optionLoader === "function" ? await optionLoader() : optionLoader;
+  if (request !== sourceHoverRequest || sourceHoverTarget !== target) return;
+  const options = uniqueSourceOptions(Array.isArray(loaded) ? loaded : []);
+  if (options.length === 0) {
+    sourceHoverMenu.textContent = "No addable source found.";
+  } else if (options.length === 1) {
+    renderSourceHubChoices(options[0].draft, options[0].label, options, target);
+  } else {
+    renderSourceChoices(options, target);
+  }
+  positionSourceHoverMenu(target);
+}
+
+function installSourceHoverMenu(target, optionLoader) {
+  if (!target || !optionLoader) return;
+  target.classList.add("source-hover-target");
+  target.setAttribute("aria-haspopup", "menu");
+  target.addEventListener("pointerenter", () => showSourceHoverMenu(target, optionLoader));
+  target.addEventListener("pointerleave", scheduleSourceHoverClose);
+  target.addEventListener("focus", () => showSourceHoverMenu(target, optionLoader));
+  target.addEventListener("blur", scheduleSourceHoverClose);
+}
+
+sourceHoverMenu.addEventListener("pointerenter", () => clearTimeout(sourceHoverCloseTimer));
+sourceHoverMenu.addEventListener("pointerleave", scheduleSourceHoverClose);
+document.addEventListener("pointerdown", (event) => {
+  if (!sourceHoverMenu.hidden && !sourceHoverMenu.contains(event.target)
+      && event.target !== sourceHoverTarget) closeSourceHoverMenu();
+});
 
 // ---------- sidebar rendering ----------
 
@@ -454,24 +777,34 @@ const mediaObserver = new IntersectionObserver((entries) => {
     else entry.target.play().catch(() => {});
   }
 }, { root: grid, rootMargin: "300px" });
+function saveViewedHistorySoon() {
+  feed().viewedIds = [...viewedIdSet].slice(-3000);
+  viewedIdSet = new Set(feed().viewedIds);
+  clearTimeout(viewedSaveTimer);
+  viewedSaveTimer = setTimeout(() => saveConfig(config), 350);
+}
+
+function markCardViewed(card) {
+  const id = Number(card?.dataset.imageId);
+  if (!id) return;
+  if (!viewedIdSet.has(id)) {
+    viewedIdSet.add(id);
+    saveViewedHistorySoon();
+  }
+  card.classList.remove("is-new");
+  card.querySelector(".new-badge")?.remove();
+  viewedObserver.unobserve(card);
+}
+
 const viewedObserver = new IntersectionObserver((entries) => {
-  let changed = false;
   for (const entry of entries) {
-    if (!entry.isIntersecting) continue;
-    const id = Number(entry.target.dataset.imageId);
-    if (id && !viewedIdSet.has(id)) {
-      viewedIdSet.add(id);
-      changed = true;
+    if (entry.isIntersecting) {
+      entry.target.dataset.viewExposed = "true";
+      continue;
     }
-    viewedObserver.unobserve(entry.target);
+    if (entry.target.dataset.viewExposed === "true") markCardViewed(entry.target);
   }
-  if (changed) {
-    feed().viewedIds = [...viewedIdSet].slice(-3000);
-    viewedIdSet = new Set(feed().viewedIds);
-    clearTimeout(viewedSaveTimer);
-    viewedSaveTimer = setTimeout(() => saveConfig(config), 500);
-  }
-}, { root: grid, threshold: 0.5 });
+}, { root: grid, threshold: 0 });
 
 function columnCount() {
   return Math.max(1, Math.floor(grid.clientWidth / (feed().density === "compact" ? 260 : 340)));
@@ -513,11 +846,179 @@ function showSkeletons() {
   }
 }
 
+const CARD_SIGNAL_ICONS = {
+  remix: '<path d="M4 20c3.5 0 5-1.5 5-5l8-8 3 3-8 8c-3.5 0-5 2-8 2Z"/><path d="m15 5 4 4"/>',
+  prompt: '<path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  resources: '<circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="m10 10 4 4"/>',
+};
+
+function makeCardInfoBadge(kind, label, href = "", shortLabel = label) {
+  const badge = document.createElement(href ? "a" : "span");
+  badge.className = `card-info-badge ${kind}`;
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  if (href) {
+    badge.href = href;
+    badge.target = "_blank";
+    badge.rel = "noopener";
+  }
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = CARD_SIGNAL_ICONS[kind];
+  const text = document.createElement("span");
+  text.textContent = shortLabel;
+  badge.append(icon, text);
+  return badge;
+}
+
+function remixUrl(item) {
+  return `https://${effectiveLinkDomain()}/images/${item.id}?cmh-remix=1`;
+}
+
+function makeCardInfoSignals(item) {
+  const { hasPrompt, hasResources } = generationContentSignals(item);
+  const row = document.createElement("div");
+  row.className = "card-info-signals";
+  const canRemix = ["image", "video", "audio"].includes(item.type || "image")
+    && (typeof item.hasPositivePrompt === "boolean" ? item.hasPositivePrompt : hasPrompt);
+  if (canRemix) row.append(makeCardInfoBadge("remix", "Remix", remixUrl(item)));
+  if (hasPrompt) row.append(makeCardInfoBadge("prompt", "Prompt published", "", "P"));
+  if (hasResources) row.append(makeCardInfoBadge("resources", "Resources published", "", "R"));
+  return row.childElementCount > 0 ? row : null;
+}
+
+function syncCardInfoSignals(item) {
+  for (const card of grid.querySelectorAll(`.card[data-image-id="${item.id}"]`)) {
+    const info = card.querySelector(".info");
+    if (!info) continue;
+    const current = info.querySelector(".card-info-signals");
+    const replacement = makeCardInfoSignals(item);
+    if (current && replacement) current.replaceWith(replacement);
+    else if (current) current.remove();
+    else if (replacement) info.querySelector(".stats")?.before(replacement);
+  }
+}
+
+function makeBuzzBadge(item) {
+  const amount = imageBuzzAmount(item);
+  const badge = document.createElement("a");
+  badge.className = "buzz-badge";
+  badge.href = `https://${effectiveLinkDomain()}/images/${item.id}`;
+  badge.target = "_blank";
+  badge.rel = "noopener";
+  badge.textContent = `⚡ ${amount.toLocaleString("en-US")}`;
+  badge.title = `${amount.toLocaleString("en-US")} Buzz donated · open on Civitai to donate`;
+  badge.setAttribute("aria-label", badge.title);
+  return badge;
+}
+
+function creatorAvatar(item) {
+  const avatar = document.createElement("span");
+  avatar.className = "creator-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  const level = Number(item.user?.profilePicture?.nsfwLevel) || 0;
+  const allowed = level === 0 || (maskFromLevels(selectedBrowsingLevels()) & level) === level;
+  const url = allowed ? userAvatarUrl(item.user, 64) : null;
+  const fallback = () => {
+    avatar.replaceChildren((item.username || "?").slice(0, 1).toLocaleUpperCase());
+  };
+  const showImage = (source) => {
+    if (!source) return false;
+    const image = document.createElement("img");
+    image.src = source;
+    image.alt = "";
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("error", fallback, { once: true });
+    avatar.replaceChildren(image);
+    return true;
+  };
+  if (!showImage(url)) {
+    fallback();
+    if (item.username) {
+      queuedCreatorProfile(item.username).then((user) => {
+        if (!avatar.isConnected || !user) return;
+        item.user = { ...(item.user || {}), ...user };
+        const profileLevel = Number(item.user?.profilePicture?.nsfwLevel) || 0;
+        const profileAllowed = profileLevel === 0
+          || (maskFromLevels(selectedBrowsingLevels()) & profileLevel) === profileLevel;
+        if (profileAllowed) showImage(userAvatarUrl(item.user, 64));
+      }).catch(() => {});
+    }
+  }
+  return avatar;
+}
+
+function createCardModelAttribution(item, modelSources, domain) {
+  const checkpointSource = modelSources.find((label) =>
+    label.toLocaleLowerCase().includes("checkpoint")
+  );
+  const versionIds = checkpointSource
+    ? [] : [...new Set(item.modelVersionIds || [])].slice(0, 10);
+  const labels = checkpointSource
+    ? [checkpointSource] : (versionIds.length ? ["model"] : (item.baseModel ? [item.baseModel] : []));
+  if (labels.length === 0) return null;
+
+  const container = document.createElement("span");
+  container.className = "made-with";
+  labels.forEach((label, index) => {
+    if (index > 0) container.append(" + ");
+    const fallback = versionIds.length === 0 ? BASE_MODEL_LINKS[label] : null;
+    const sourcePath = sourceLinks[label] || fallback?.path;
+    if (!sourcePath) {
+      container.append(fallback?.label || label);
+      return;
+    }
+    const modelLabel = fallback?.label || label;
+    const modelLink = document.createElement("a");
+    modelLink.textContent = modelLabel;
+    modelLink.href = `https://${domain}${sourcePath}`;
+    modelLink.target = "_blank";
+    modelLink.rel = "noopener";
+    if (fallback) modelLink.title = `Mapped from Civitai baseModel: ${label}`;
+    const draft = modelDraftFromPath(sourcePath, modelLabel);
+    if (draft) installSourceHoverMenu(modelLink, [{ label: modelLabel, draft }]);
+    container.append(modelLink);
+  });
+
+  if (versionIds.length > 0) {
+    Promise.allSettled(versionIds.map((versionId) =>
+      queuedModelVersion(versionId).then((version) => ({ versionId, version }))
+    )).then((results) => {
+      if (!container.isConnected) return;
+      const resources = results.filter((result) => result.status === "fulfilled")
+        .map((result) => result.value);
+      const selected = resources.find(({ version }) =>
+        String(version.type || "").toLocaleLowerCase() === "checkpoint"
+      ) || resources.find(({ version }) => {
+        const type = String(version.type || "").toLocaleLowerCase();
+        return !type.includes("lora") && !type.includes("embedding") && !type.includes("textual");
+      }) || resources[0];
+      if (!selected?.version.modelId) return;
+      const { versionId, version } = selected;
+      const modelLink = document.createElement("a");
+      modelLink.textContent = version.name;
+      modelLink.href = `https://${domain}/models/${version.modelId}?modelVersionId=${versionId}`;
+      modelLink.target = "_blank";
+      modelLink.rel = "noopener";
+      modelLink.title = version.versionName && version.versionName !== version.name
+        ? `Version: ${version.versionName}` : version.name;
+      installSourceHoverMenu(modelLink, [{
+        label: version.name,
+        draft: { type: "model", modelId: Number(version.modelId), label: version.name },
+      }]);
+      container.replaceChildren(modelLink);
+    }).catch(() => {});
+  }
+  return container;
+}
+
 function makeCard(item) {
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.imageId = item.id;
-  if (previousVisitAt && Date.parse(item.createdAt) > Date.parse(previousVisitAt)) {
+  if (isUnviewedNewImage(item, previousVisitAt, viewedIdSet)) {
     card.classList.add("is-new");
   }
 
@@ -529,6 +1030,7 @@ function makeCard(item) {
     if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     openLightbox(item.id);
+    markCardViewed(card);
   });
   if (card.classList.contains("is-new")) {
     const badge = document.createElement("span");
@@ -635,6 +1137,7 @@ function makeCard(item) {
     });
     cardActions.append(button);
   }
+  cardActions.append(makeBuzzBadge(item));
   const collect = document.createElement("button");
   collect.type = "button"; collect.className = "collect"; collect.textContent = "＋"; collect.title = "Add to collection";
   collect.addEventListener("click", () => openCollectionPicker(item));
@@ -642,87 +1145,45 @@ function makeCard(item) {
 
   const info = document.createElement("div");
   info.className = "info";
+  const infoSignals = makeCardInfoSignals(item);
   const domain = effectiveLinkDomain();
 
   const sourcesDiv = document.createElement("div");
   sourcesDiv.className = "sources";
-  const userMatched = item._sources.some((label) => sourceKinds[label] === "user");
   const modelSources = item._sources.filter((label) => sourceKinds[label] === "model");
-  const displayedSources = userMatched ? [] : item._sources;
+  const displayedSources = item._sources.filter((label) => sourceKinds[label] !== "user");
   displayedSources.forEach((label, i) => {
     if (i > 0) sourcesDiv.append(" + ");
     const a = document.createElement("a");
     a.textContent = label;
-    a.href = `https://${domain}${sourceLinks[label] || "/"}`;
+    const sourcePath = sourceLinks[label] || "/";
+    a.href = `https://${domain}${sourcePath}`;
     a.target = "_blank";
     a.rel = "noopener";
+    const draft = sourceKinds[label] === "model"
+      ? modelDraftFromPath(sourcePath, label)
+      : sourceKinds[label] === "collection" ? collectionDraftFromPath(sourcePath, label) : null;
+    if (draft) installSourceHoverMenu(a, [{ label, draft }]);
     sourcesDiv.append(a);
   });
 
   const byline = document.createElement("div");
+  byline.className = "creator-line";
   const userLink = document.createElement("a");
   userLink.className = "user";
-  userLink.textContent = `${userMatched ? "@" : ""}${item.username || "?"}`;
+  userLink.textContent = item.username || "?";
   if (item.username) {
     userLink.href = `https://${domain}/user/${encodeURIComponent(item.username)}`;
     userLink.target = "_blank";
     userLink.rel = "noopener";
+    installSourceHoverMenu(userLink, [{
+      label: `@${item.username}`,
+      draft: { type: "user", username: item.username },
+    }]);
   }
-  if (!userMatched) byline.append("by ");
-  byline.append(userLink);
-  let madeWithLine = null;
-  if (userMatched) {
-    byline.append(` · ${new Date(item.createdAt).toLocaleDateString()}`);
-    const preferredSource = modelSources.find((label) => label.toLocaleLowerCase().includes("checkpoint"))
-      || modelSources[0];
-    const versionIds = preferredSource
-      ? [] : [...new Set(item.modelVersionIds || [])].slice(0, 10);
-    const madeWith = preferredSource
-      ? [preferredSource] : (item.baseModel ? [item.baseModel] : (versionIds.length ? ["model"] : []));
-    if (madeWith.length > 0) {
-      madeWithLine = document.createElement("div");
-      madeWithLine.className = "made-with-line";
-      madeWithLine.append("made with ");
-      const madeWithContainer = document.createElement("span");
-      madeWithContainer.className = "made-with";
-      madeWith.forEach((label, index) => {
-        if (index > 0) madeWithContainer.append(" + ");
-        const fallback = versionIds.length === 0 ? BASE_MODEL_LINKS[label] : null;
-        if (sourceLinks[label] || fallback) {
-          const modelLink = document.createElement("a");
-          modelLink.textContent = fallback?.label || label;
-          modelLink.href = `https://${domain}${sourceLinks[label] || fallback.path}`;
-          modelLink.target = "_blank";
-          modelLink.rel = "noopener";
-          if (fallback) modelLink.title = `Mapped from Civitai baseModel: ${label}`;
-          madeWithContainer.append(modelLink);
-        } else madeWithContainer.append(label);
-      });
-      madeWithLine.append(madeWithContainer);
-      if (versionIds.length > 0) {
-        Promise.allSettled(versionIds.map((versionId) =>
-          queuedModelVersion(versionId).then((version) => ({ versionId, version }))
-        )).then((results) => {
-          if (!madeWithContainer.isConnected) return;
-          const resources = results.filter((result) => result.status === "fulfilled")
-            .map((result) => result.value);
-          const selected = resources.find(({ version }) => version.type.toLocaleLowerCase() === "checkpoint")
-            || resources[0];
-          if (!selected?.version.modelId) return;
-          const { versionId, version } = selected;
-          const modelLink = document.createElement("a");
-          modelLink.textContent = version.name;
-          modelLink.href = `https://${domain}/models/${version.modelId}?modelVersionId=${versionId}`;
-          modelLink.target = "_blank";
-          modelLink.rel = "noopener";
-          modelLink.title = version.versionName && version.versionName !== version.name
-            ? `Version: ${version.versionName}` : version.name;
-          madeWithContainer.replaceChildren(modelLink);
-        }).catch(() => {});
-      }
-    }
-  }
-  if (!userMatched) byline.append(` · ${new Date(item.createdAt).toLocaleDateString()}`);
+  byline.append(creatorAvatar(item), "by ", userLink);
+  const modelAttribution = createCardModelAttribution(item, modelSources, domain);
+  if (modelAttribution) byline.append(" with ", modelAttribution);
 
   const s = item.stats || {};
   const reactions = (s.likeCount || 0) + (s.heartCount || 0) + (s.laughCount || 0) + (s.cryCount || 0);
@@ -750,7 +1211,7 @@ function makeCard(item) {
 
   if (displayedSources.length > 0) info.append(sourcesDiv);
   info.append(byline);
-  if (madeWithLine) info.append(madeWithLine);
+  if (infoSignals) info.append(infoSignals);
   info.append(stats);
   card.append(link, cardActions, info);
   viewedObserver.observe(card);
@@ -774,13 +1235,6 @@ function appendLightboxMeta(label, value) {
   $("lightbox-meta").append(term, detail);
 }
 
-function aspectRatioDescription(width, height) {
-  if (!(width > 0 && height > 0)) return "";
-  const ratio = width / height;
-  const shape = ratio > 1.05 ? "landscape" : ratio < 0.95 ? "portrait" : "square";
-  return `${ratio.toFixed(2)}:1 (${shape})`;
-}
-
 function renderLightboxTitle(item) {
   $("lightbox-title").textContent = "";
   if (!item.username) {
@@ -793,6 +1247,10 @@ function renderLightboxTitle(item) {
   author.target = "_blank";
   author.rel = "noopener";
   author.title = `Open @${item.username}'s Civitai profile`;
+  installSourceHoverMenu(author, [{
+    label: `@${item.username}`,
+    draft: { type: "user", username: item.username },
+  }]);
   $("lightbox-title").append(author);
 }
 
@@ -801,7 +1259,6 @@ function renderLightboxReactions(item, imageUrl) {
   const reactions = [
     ["Like", "👍", "likeCount"], ["Heart", "❤", "heartCount"],
     ["Laugh", "😂", "laughCount"], ["Cry", "😢", "cryCount"],
-    ["Dislike", "👎", "dislikeCount"],
   ];
   $("lightbox-reactions").textContent = "";
   $("lightbox-action-status").textContent = "";
@@ -914,6 +1371,28 @@ function renderLightboxResources(resources) {
         + (versionId ? `?modelVersionId=${versionId}` : "");
       name.target = "_blank";
       name.rel = "noopener";
+      installSourceHoverMenu(name, [{
+        label: name.textContent,
+        draft: {
+          type: "model", modelId: Number(resource.modelId), label: name.textContent,
+        },
+      }]);
+    } else if (versionId) {
+      queuedModelVersion(versionId).then((version) => {
+        if (!name.isConnected || !version?.modelId) return;
+        const link = document.createElement("a");
+        link.textContent = name.textContent;
+        link.href = `https://${effectiveLinkDomain()}/models/${version.modelId}?modelVersionId=${versionId}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        installSourceHoverMenu(link, [{
+          label: version.name || name.textContent,
+          draft: {
+            type: "model", modelId: Number(version.modelId), label: version.name || name.textContent,
+          },
+        }]);
+        name.replaceWith(link);
+      }).catch(() => {});
     }
     const details = document.createElement("span");
     details.className = "lightbox-resource-meta";
@@ -1106,21 +1585,15 @@ function commentReplyForm(item, comment, rootId) {
     // inside a shared thread.
     const mention = comment.id === rootId
       ? null : { userId: comment.user?.id, username: comment.user?.username };
-    const html = commentHtml(text, mention);
-    if (html.length > 10000) {
-      status.textContent = "The reply is too long after formatting.";
-      send.disabled = false;
-      return;
-    }
     try {
       const saved = await postComment(
-        "comment", rootId, html, effectiveApiSettings(), runController?.signal
+        "comment", rootId, commentHtml(text, mention), effectiveApiSettings(), runController?.signal
       );
       const root = (item._comments || []).find((candidate) => candidate.id === rootId);
       if (root) {
         if (!Array.isArray(root.replies)) root.replies = [];
         root.replies.push({
-          content: html,
+          content: commentHtml(text, mention),
           createdAt: new Date().toISOString(),
           user: { username: "You" },
           ...(saved && typeof saved === "object" ? saved : {}),
@@ -1142,17 +1615,26 @@ function commentReplyForm(item, comment, rootId) {
 function commentEntry(item, comment, { reply = false, rootId = null } = {}) {
   const row = document.createElement("li");
   row.className = reply ? "lightbox-comment reply" : "lightbox-comment";
-  const username = comment.user?.username || "Civitai user";
+  const profileUsername = typeof comment.user?.username === "string"
+    ? comment.user.username.trim() : "";
+  const username = profileUsername || "Civitai user";
   const thread = rootId ?? comment.id;
 
   const head = document.createElement("div");
   head.className = "comment-head";
-  const author = document.createElement("a");
+  const author = document.createElement(profileUsername ? "a" : "span");
   author.className = "comment-author";
   author.textContent = `@${username}`;
-  author.href = `https://${effectiveLinkDomain()}/user/${encodeURIComponent(username)}`;
-  author.target = "_blank";
-  author.rel = "noopener";
+  if (profileUsername) {
+    author.href = `https://${effectiveLinkDomain()}/user/${encodeURIComponent(profileUsername)}`;
+    author.target = "_blank";
+    author.rel = "noopener";
+    author.title = `Add @${profileUsername} to a hub or open the Civitai profile`;
+    installSourceHoverMenu(author, [{
+      label: `@${profileUsername}`,
+      draft: { type: "user", username: profileUsername },
+    }]);
+  }
   const meta = document.createElement("span");
   meta.className = "lightbox-comment-meta";
   meta.textContent = comment.createdAt ? new Date(comment.createdAt).toLocaleString() : "";
@@ -1284,42 +1766,52 @@ function openLightbox(imageId) {
     media.autoplay = true;
     media.loop = true;
   }
-  $("lightbox-media").append(media);
+  const sourceButton = document.createElement("button");
+  sourceButton.type = "button";
+  sourceButton.className = "preview-source-button";
+  sourceButton.textContent = "＋ Sources";
+  sourceButton.title = "Add this image's creator, models or collection to a hub";
+  installSourceHoverMenu(sourceButton, () => itemSourceOptions(item));
+  $("lightbox-media").append(media, sourceButton);
   const imageUrl = `https://${effectiveLinkDomain()}/images/${item.id}`;
   renderLightboxTitle(item);
   $("lightbox-byline").textContent = `Posted ${new Date(item.createdAt).toLocaleString()}`;
   renderLightboxReactions(item, imageUrl);
+  const buzzAmount = imageBuzzAmount(item);
+  $("lightbox-buzz").textContent = `⚡ ${buzzAmount.toLocaleString("en-US")}`;
+  $("lightbox-buzz").href = imageUrl;
+  $("lightbox-buzz").title = `${buzzAmount.toLocaleString("en-US")} Buzz donated · open on Civitai to donate`;
+  $("lightbox-buzz").setAttribute("aria-label", $("lightbox-buzz").title);
   $("lightbox-collect").onclick = () => openCollectionPicker(item);
   const meta = item._generationMeta && typeof item._generationMeta === "object"
     ? item._generationMeta : (item.meta && typeof item.meta === "object" ? item.meta : {});
   const generationResources = Array.isArray(item._generationResources) ? item._generationResources : [];
   renderLightboxResources(generationResources);
-  renderLightboxComments(item, imageUrl);
   const prompt = meta.prompt || "";
   const negative = meta.negativePrompt || meta.negative_prompt || "";
   $("lightbox-prompt-section").hidden = !prompt;
   $("lightbox-prompt").textContent = prompt;
   $("lightbox-negative-section").hidden = !negative;
   $("lightbox-negative").textContent = negative;
-  const ignored = new Set(["prompt", "negativePrompt", "negative_prompt"]);
+  const ignored = new Set([
+    "prompt", "negativePrompt", "negative_prompt", "resources", "additionalResources",
+    "civitaiResources",
+  ]);
   const entries = Object.entries(meta).filter(([key, value]) =>
-    !ignored.has(key) && value !== null && value !== undefined && typeof value !== "object"
-  ).slice(0, 30);
+    !ignored.has(key) && value !== null && value !== undefined && value !== ""
+      && typeof value !== "object"
+  ).slice(0, 18);
   const hasGenerationData = Boolean(prompt || negative || entries.length > 0 || generationResources.length > 0);
   $("lightbox-generation-note").hidden = hasGenerationData;
   $("lightbox-generation-note").textContent = hasGenerationData ? "" : item._generationAttempted
     ? "Civitai did not return prompt, resources or generation parameters for this image."
     : "Loading generation details from Civitai…";
   $("lightbox-meta").textContent = "";
-  appendLightboxMeta("Media", item.type === "video" ? "Video" : "Image");
-  appendLightboxMeta("Dimensions", item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : "");
-  appendLightboxMeta("Aspect ratio", aspectRatioDescription(item.width, item.height));
-  appendLightboxMeta("Browsing level",
-    BROWSING_LEVEL_LABELS[itemBrowsingLevel(item)] || item.nsfwLevel || "");
-  appendLightboxMeta("Base model", item.baseModel || "");
   for (const [key, value] of entries) {
     appendLightboxMeta(key, value);
   }
+  $("lightbox-meta-section").hidden = entries.length === 0;
+  renderLightboxComments(item, imageUrl);
   $("lightbox-open").href = imageUrl;
   const index = sequence.indexOf(item);
   $("lightbox-prev").disabled = index <= 0;
@@ -1328,12 +1820,19 @@ function openLightbox(imageId) {
   $("lightbox-close").focus();
   // The v1 feed drops these for most images; the signed-in session on the open
   // Civitai tab returns them, so this no longer waits on an API key.
-  if (!hasGenerationData && !item._generationAttempted) {
+  if (!item._generationAttempted) {
     item._generationAttempted = true;
     resolveImageGenerationData(item.id, effectiveApiSettings(), runController?.signal)
       .then((data) => {
         item._generationMeta = data?.meta || null;
         item._generationResources = Array.isArray(data?.resources) ? data.resources : [];
+        item.modelVersionIds = [...new Set([
+          ...(item.modelVersionIds || []),
+          ...item._generationResources.map((resource) =>
+            Number(resource?.modelVersionId || resource?.versionId)
+          ).filter((id) => Number.isSafeInteger(id) && id > 0),
+        ])];
+        syncCardInfoSignals(item);
         if (Number($("lightbox").dataset.imageId) === item.id && !$("lightbox").hidden) openLightbox(item.id);
       })
       .catch((error) => {
@@ -1432,6 +1931,7 @@ function matchesFeedFilters(item) {
   const itemLevel = itemBrowsingLevel(item);
   if (itemLevel !== null && !selectedBrowsingLevels().includes(itemLevel)) return false;
   if (f.mediaType !== "all" && item.type !== f.mediaType) return false;
+  if (!matchesGenerationFilters(item, f)) return false;
   if (f.hideViewed && viewedIdSet.has(item.id)) return false;
   if (typeof item.username === "string"
       && config.settings.hiddenCreators.includes(item.username.toLocaleLowerCase())) return false;
@@ -1597,9 +2097,9 @@ async function showMore(run = runId) {
     renderedCount = renderedIds.size;
 
     const exhausted = activeStreams().length === 0;
-    const newCount = previousVisitAt
-      ? pool.filter((item) => Date.parse(item.createdAt) > Date.parse(previousVisitAt)).length
-      : 0;
+    const newCount = pool.filter((item) =>
+      isUnviewedNewImage(item, previousVisitAt, viewedIdSet)
+    ).length;
     emptyEl.hidden = !(renderedCount === 0 && exhausted);
     if (!emptyEl.hidden) {
       emptyEl.textContent = feed().sources.length === 0
@@ -1716,6 +2216,7 @@ function syncFeedControls() {
   $("period").value = feed().period;
   $("media-type").value = feed().mediaType;
   $("aspect-ratio").value = feed().aspectRatio;
+  $("generation-filter").value = feed().generationFilter;
   $("density").value = feed().density;
   $("autoplay-videos").checked = feed().autoplayVideos;
   $("hide-viewed").checked = feed().hideViewed;
@@ -1834,7 +2335,11 @@ function bindSettings() {
     await saveConfig(config);
     startFeed();
   });
-  for (const [id, property] of [["media-type", "mediaType"], ["aspect-ratio", "aspectRatio"]]) {
+  for (const [id, property] of [
+    ["media-type", "mediaType"],
+    ["aspect-ratio", "aspectRatio"],
+    ["generation-filter", "generationFilter"],
+  ]) {
     $(id).addEventListener("change", async (e) => {
       feed()[property] = e.target.value;
       await saveConfig(config);
@@ -2189,19 +2694,13 @@ function bindLightbox() {
     button.disabled = true;
     $("lightbox-comments-status").hidden = false;
     $("lightbox-comments-status").textContent = "Posting comment…";
-    const html = commentHtml(input.value);
-    if (html.length > 10000) {
-      $("lightbox-comments-status").textContent = "The comment is too long after formatting.";
-      button.disabled = false;
-      return;
-    }
     try {
       const saved = await postComment(
-        "image", item.id, html, effectiveApiSettings(), runController?.signal
+        "image", item.id, commentHtml(input.value), effectiveApiSettings(), runController?.signal
       );
       if (!Array.isArray(item._comments)) item._comments = [];
       item._comments.push({
-        content: html,
+        content: commentHtml(input.value),
         createdAt: new Date().toISOString(),
         user: { username: "You" },
         ...(saved && typeof saved === "object" ? saved : {}),

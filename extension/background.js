@@ -1,4 +1,12 @@
-import { loadConfig, saveConfig, mergeSourceIntoFeed, normalizeSource } from "./storage.js";
+import {
+  loadConfig, saveConfig, mergeSourceIntoFeed, normalizeSource,
+  makeFeed, normalizeNewHubName, MAX_HUBS,
+} from "./storage.js";
+import {
+  ALLOWED_CIVITAI_HOSTS,
+  DEFAULT_CIVITAI_HOST,
+  isAllowedCivitaiHost,
+} from "./distribution.js";
 
 let openFeedPromise = null;
 
@@ -38,7 +46,7 @@ const HOST_PINNED_OPERATIONS = new Set(["get-browsing-level"]);
 
 function isCivitaiTab(tab) {
   try {
-    return ["civitai.com", "civitai.red"].includes(new URL(tab?.url || "").hostname);
+    return isAllowedCivitaiHost(new URL(tab?.url || "").hostname);
   } catch {
     return false;
   }
@@ -46,7 +54,7 @@ function isCivitaiTab(tab) {
 
 function queryCivitaiTabs() {
   return new Promise((resolve) => {
-    chrome.tabs.query({ url: ["https://civitai.com/*", "https://civitai.red/*"] }, (tabs) => {
+    chrome.tabs.query({ url: [...ALLOWED_CIVITAI_HOSTS].map((host) => `https://${host}/*`) }, (tabs) => {
       resolve(chrome.runtime.lastError ? [] : tabs);
     });
   });
@@ -68,8 +76,8 @@ async function routeAccountRequest(message, sender) {
     return { ok: false, code: "unsupported-operation" };
   }
 
-  const preferredHost = ["civitai.com", "civitai.red"].includes(message.preferredHost)
-    ? message.preferredHost : "civitai.com";
+  const preferredHost = isAllowedCivitaiHost(message.preferredHost)
+    ? message.preferredHost : DEFAULT_CIVITAI_HOST;
   const tabs = await queryCivitaiTabs();
   let candidates = [];
   if (isCivitaiTab(sender.tab)) candidates.push(sender.tab);
@@ -141,13 +149,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+  if (msg.type === "create-hub-with-source") {
+    createHubWithSource(msg, sender)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 // Mature media is only served from civitai.red, so background reads follow the
 // same host the user browses rather than always hitting the SFW host.
 function civitaiHost(config) {
-  return ["civitai.com", "civitai.red"].includes(config?.settings?.linkDomain)
-    ? config.settings.linkDomain : "civitai.com";
+  return isAllowedCivitaiHost(config?.settings?.linkDomain)
+    ? config.settings.linkDomain : DEFAULT_CIVITAI_HOST;
 }
 
 function unwrapTrpcPayload(data) {
@@ -223,4 +237,40 @@ async function addSource({ feedId, source }, sender) {
   const result = mergeSourceIntoFeed(feed, source);
   if (result.status !== "duplicate") await saveConfig(config);
   return { ok: true, status: result.status, feedName: feed.name };
+}
+
+async function createHubWithSource({ name, source }, sender) {
+  const config = await loadConfig();
+  if (config.feeds.length >= MAX_HUBS) {
+    throw new Error(`MultiHub supports at most ${MAX_HUBS} hubs`);
+  }
+  const feed = makeFeed(normalizeNewHubName(name));
+  config.feeds.push(feed);
+  source = normalizeSource(source, { strict: true });
+  if (source.type === "model" && !source.label) {
+    try {
+      const headers = config.settings.apiKey
+        ? { Authorization: `Bearer ${config.settings.apiKey}` }
+        : {};
+      const res = await fetch(
+        `https://${civitaiHost(config)}/api/v1/models/${source.modelId}`, { headers }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        source.label = `${data.type === "LORA" ? "LoRA" : data.type}: ${data.name}`;
+      }
+    } catch {
+      // A useful source is still created when its display label cannot be enriched.
+    }
+  }
+  if (source.type === "collection" && !source.label) {
+    const collection = await readCollection(source.collectionId, config, sender);
+    if (String(collection.type).toLocaleLowerCase() !== "image") {
+      throw new Error(`Collection type ${collection.type || "unknown"} is not supported by the media feed`);
+    }
+    source.label = `Collection: ${collection.name || `#${source.collectionId}`}`;
+  }
+  const result = mergeSourceIntoFeed(feed, source);
+  await saveConfig(config);
+  return { ok: true, status: result.status, feedId: feed.id, feedName: feed.name };
 }

@@ -10,7 +10,7 @@ deduplicated so they can be browsed from one focused feed.
 MultiHub works in a standalone Chrome tab or directly below the Civitai header on
 `civitai.com` and `civitai.red`.
 
-> **Public preview (`0.12.0`).** MultiHub is an independent, unofficial project. It is not
+> **Public preview (`0.12.1`).** MultiHub is an independent, unofficial project. It is not
 > affiliated with or endorsed by Civitai. Installation currently uses Chrome's **Load unpacked**
 > developer workflow, so updates are manual.
 
@@ -26,7 +26,7 @@ Chrome cannot install this extension directly from a ZIP. Download it, extract i
 folder, and then load that folder.
 
 1. Open the [latest Release](https://github.com/trunksn1/Civitai-MultiHub/releases/latest).
-2. Under **Assets**, download `civitai-multihub-full-v0.12.0.zip`.
+2. Under **Assets**, download `civitai-multihub-full-v0.12.1.zip`.
    Do **not** download GitHub's automatic `Source code` archives.
 3. Extract the ZIP. Confirm that `manifest.json` is directly inside the extracted folder.
 4. Open `chrome://extensions` in Chrome and enable **Developer mode**.
@@ -63,6 +63,18 @@ For checksum commands, updates, removal, and troubleshooting, see the
 - Image preview with generation data, resources, comments, replies, and Civitai links.
 - Optional reactions, comments, and collection actions initiated explicitly by the user.
 - Local hub export and import without API keys or viewed-history data.
+
+### 0.12.1 image-card and source-picker updates
+
+- NEW markers now identify unseen images, with persistent filters for metadata, prompts, and
+  generation resources.
+- Cards show creator avatars, checkpoint attribution, prompt/resource publication markers, Remix
+  availability, always-visible reactions, and read-only Buzz links to the native Civitai image.
+- Image previews put the prompt before comments, compact generation details, and place collection
+  actions beside the date with reactions below the media.
+- Source menus work from creators, models, collections, generation resources, preview sources, and
+  commenter names. Every picker supports alphabetical search and inline creation of a named hub.
+- Civitai Featured Images and public collection headings expose full Add to MultiHub actions.
 
 The [feature guide](docs/FEATURES.md) explains sources, filters, account actions, browsing levels,
 and the current limitations in more detail.

@@ -2,13 +2,49 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  clearModelCache, resolveModel, resolveCollection, openSourceStreams, fetchStreamPage,
+  clearModelCache, resolveModel, resolveCreatorProfile, resolveCollection,
+  openSourceStreams, fetchStreamPage,
   resolveImageGenerationData, resolveImageComments,
   toggleImageReaction, resolveWritableCollections, addImageToCollection,
-  postComment, resolveAccountBrowsingLevels, userAvatarUrl,
+  postComment, resolveAccountBrowsingLevels, userAvatarUrl, imageBuzzAmount,
   CIVITAI_CAPABILITIES, getCivitaiCapabilityState, resetCivitaiCapabilities,
   explainCivitaiError,
 } from "../extension/civitai-api.js";
+
+test("Buzz donations are normalized as a read-only non-negative count", () => {
+  assert.equal(imageBuzzAmount({ stats: { tippedAmountCountAllTime: 125.9 } }), 125);
+  assert.equal(imageBuzzAmount({ stats: { tippedAmountCount: 7 } }), 7);
+  assert.equal(imageBuzzAmount({ stats: { tippedAmountCountAllTime: -2 } }), 0);
+  assert.equal(imageBuzzAmount({ stats: {} }), 0);
+});
+
+test("creator profiles provide and cache the avatar omitted by REST image feeds", async () => {
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  const key = "d22de7f7-ba00-4354-b912-8241d75be9a3";
+  globalThis.fetch = async (url) => {
+    requested.push(decodeURIComponent(url));
+    return {
+      ok: true,
+      json: async () => ({ result: { data: { json: {
+        id: 7, username: "Alice", profilePicture: { url: key },
+      } } } }),
+    };
+  };
+  try {
+    clearModelCache();
+    const first = await resolveCreatorProfile("Alice", { linkDomain: "civitai.com" });
+    const second = await resolveCreatorProfile("alice", { linkDomain: "civitai.com" });
+    assert.equal(first.profilePicture.url, key);
+    assert.equal(second.id, 7);
+    assert.equal(requested.length, 1);
+    assert.match(requested[0], /user\.getCreator/);
+    assert.match(requested[0], /"username":"Alice"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelCache();
+  }
+});
 
 function devalueFixture(root) {
   const values = [];
@@ -64,8 +100,11 @@ test("public image collections resolve and paginate as first-class sources", asy
         items: [{
           id: 10, url: "collection-storage-key", name: "painting.png", type: "image",
           width: 800, height: 1200, createdAt: "2026-07-12T10:00:00.000Z",
-          nsfwLevel: 2, user: { username: "Alice" },
-          stats: { likeCountAllTime: 8, heartCountAllTime: 3, commentCountAllTime: 2 },
+          nsfwLevel: 2, user: { username: "Alice" }, modelVersionIdsManual: [77],
+          stats: {
+            likeCountAllTime: 8, heartCountAllTime: 3, commentCountAllTime: 2,
+            tippedAmountCountAllTime: 125,
+          },
         }],
       } } } }),
     };
@@ -86,6 +125,8 @@ test("public image collections resolve and paginate as first-class sources", asy
       "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/collection-storage-key/original=true/painting.jpeg");
     assert.equal(items[0].stats.likeCount, 8);
     assert.equal(items[0].stats.commentCount, 2);
+    assert.equal(items[0].stats.tippedAmountCount, 125);
+    assert.deepEqual(items[0].modelVersionIds, [77]);
     assert.match(decodeURIComponent(stream.nextUrl), /"cursor":"next-page"/);
     assert.match(requested.find((url) => url.includes("image.getInfinite")), /"collectionId":5205910/);
   } finally {

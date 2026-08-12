@@ -88,6 +88,15 @@
           <option value="square">Square-ish</option>
         </select>
       </label>
+      <label>Generation details
+        <select id="generation-filter">
+          <option value="all">Show all images</option>
+          <option value="no-metadata">Hide images with no metadata</option>
+          <option value="prompt">Show images with Prompt</option>
+          <option value="resources">Show images with resources</option>
+          <option value="complete-metadata">Show images with Prompt + resources</option>
+        </select>
+      </label>
       <button id="refresh">Refresh feed</button>
     </section>
 
@@ -168,14 +177,37 @@
       <div id="lightbox-media" class="lightbox-media"></div>
       <aside class="lightbox-info">
         <h2 id="lightbox-title">Image details</h2>
-        <p id="lightbox-byline"></p>
-        <div id="lightbox-reactions" class="lightbox-reactions"></div>
-        <button id="lightbox-collect" class="lightbox-collect" type="button">＋ Add to collection</button>
+        <div class="lightbox-byline-row">
+          <p id="lightbox-byline"></p>
+          <button id="lightbox-collect" class="lightbox-collect" type="button">＋ Add to collection</button>
+        </div>
+        <div class="lightbox-action-bar">
+          <div id="lightbox-reactions" class="lightbox-reactions"></div>
+          <a id="lightbox-buzz" class="buzz-badge lightbox-buzz" target="_blank" rel="noopener"></a>
+        </div>
         <p id="lightbox-action-status" class="lightbox-action-status" role="status" aria-live="polite"></p>
-        <section id="lightbox-resources-section" class="lightbox-detail-section" hidden>
-          <h3>Resources used</h3>
-          <ul id="lightbox-resources" class="lightbox-resources"></ul>
+
+        <section class="lightbox-generation-card">
+          <h3>Generation data</h3>
+          <div id="lightbox-prompt-section" class="lightbox-generation-section">
+            <div class="lightbox-section-title"><strong>Prompt</strong></div>
+            <p id="lightbox-prompt"></p>
+          </div>
+          <div id="lightbox-negative-section" class="lightbox-generation-section">
+            <strong>Negative prompt</strong>
+            <p id="lightbox-negative"></p>
+          </div>
+          <section id="lightbox-resources-section" class="lightbox-generation-section" hidden>
+            <h3>Resources used</h3>
+            <ul id="lightbox-resources" class="lightbox-resources"></ul>
+          </section>
+          <section id="lightbox-meta-section" class="lightbox-generation-section" hidden>
+            <h3>Other metadata</h3>
+            <dl id="lightbox-meta"></dl>
+          </section>
+          <p id="lightbox-generation-note" class="lightbox-note" hidden></p>
         </section>
+
         <section id="lightbox-comments-section" class="lightbox-detail-section" hidden>
           <h3 id="lightbox-comments-title">Comments</h3>
           <ul id="lightbox-comments" class="lightbox-comments"></ul>
@@ -185,16 +217,6 @@
             <button type="submit">Post comment</button>
           </form>
         </section>
-        <div id="lightbox-prompt-section">
-          <div class="lightbox-section-title"><strong>Prompt</strong></div>
-          <p id="lightbox-prompt"></p>
-        </div>
-        <div id="lightbox-negative-section">
-          <strong>Negative prompt</strong>
-          <p id="lightbox-negative"></p>
-        </div>
-        <p id="lightbox-generation-note" class="lightbox-note" hidden></p>
-        <dl id="lightbox-meta"></dl>
         <a id="lightbox-open" target="_blank" rel="noopener">Open on Civitai ↗</a>
       </aside>
     </div>

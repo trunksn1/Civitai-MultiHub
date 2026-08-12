@@ -5,8 +5,8 @@
 //    site's own styling. Civitai is a React app, so the ribbon is re-rendered
 //    on navigation — a debounced observer re-injects when the item disappears. If
 //    the ribbon can't be found (site redesign), a floating button is the fallback.
-// 2. On model/LoRA, creator and collection pages, shows a floating "Add to MultiHub"
-//    button that always asks which hub to add to.
+// 2. On model/LoRA, creator and collection pages, places an "Add to MultiHub"
+//    button beside the page's own header actions. It always asks which hub to add to.
 // 3. Proxies explicitly allowlisted read operations — collections, the browsing
 //    level, image comments and generation data — through the current Civitai
 //    origin. This lets Chrome attach the site's existing session cookies without
@@ -240,13 +240,14 @@ function ensureNavButton() {
   return true;
 }
 
-// ---------- floating widget (add button + fallback opener) ----------
+// ---------- page add action + floating fallback opener ----------
 
 const widget = document.createElement("div");
 widget.id = "cmh-widget";
 
 const openBtn = document.createElement("button");
 openBtn.className = "cmh-btn";
+openBtn.type = "button";
 openBtn.textContent = "MultiHub";
 openBtn.title = "Open your MultiHub for Civitai feed";
 openBtn.hidden = true; // only shown if ribbon injection fails
@@ -254,16 +255,24 @@ openBtn.addEventListener("click", () => chrome.runtime.sendMessage({ type: "open
 
 const addBtn = document.createElement("button");
 addBtn.className = "cmh-btn cmh-add";
+addBtn.type = "button";
 addBtn.addEventListener("click", onAddClick);
+
+const pageAction = document.createElement("div");
+pageAction.id = "cmh-page-action";
+pageAction.hidden = true;
 
 const hubMenu = document.createElement("div");
 hubMenu.className = "cmh-menu";
 hubMenu.hidden = true;
 
-widget.append(hubMenu, addBtn, openBtn);
+pageAction.append(hubMenu, addBtn);
+widget.append(openBtn);
 document.documentElement.append(widget);
 
-function onAddClick() {
+function onAddClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
   const source = pageSource();
   if (!source) return;
   if (!hubMenu.hidden) {
@@ -322,9 +331,127 @@ function menuHeader(text) {
 function menuItem(text, onClick) {
   const item = document.createElement("button");
   item.className = "cmh-menu-item";
+  item.type = "button";
   item.textContent = text;
-  item.addEventListener("click", onClick);
+  item.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick();
+  });
   return item;
+}
+
+function runtimeMessage(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError?.message;
+      resolve(error ? { ok: false, error } : response || { ok: false, error: "No response" });
+    });
+  });
+}
+
+function sortedHubChoices(hubs) {
+  return [...(Array.isArray(hubs) ? hubs : [])].sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+      sensitivity: "base", numeric: true,
+    })
+  );
+}
+
+function menuDivider(label) {
+  const divider = document.createElement("div");
+  divider.className = "cmh-menu-divider";
+  divider.textContent = label;
+  return divider;
+}
+
+function renderHubPicker(container, { hubs, source, onBack = null, onSelect, onCreate }) {
+  const controls = document.createElement("div");
+  controls.className = "cmh-hub-picker-controls";
+  if (onBack) {
+    const back = menuItem("← Back", onBack);
+    back.classList.add("cmh-menu-back");
+    controls.append(back);
+  }
+
+  const createButton = menuItem("＋ Create a new hub", () => {
+    createButton.hidden = true;
+    createForm.hidden = false;
+    createInput.focus();
+  });
+  createButton.classList.add("cmh-menu-create");
+
+  const createForm = document.createElement("form");
+  createForm.className = "cmh-create-hub-form";
+  createForm.hidden = true;
+  const createInput = document.createElement("input");
+  createInput.type = "text";
+  createInput.maxLength = 80;
+  createInput.placeholder = "New hub name";
+  createInput.setAttribute("aria-label", "New hub name");
+  createInput.required = true;
+  createInput.addEventListener("input", () => createInput.setCustomValidity(""));
+  const createActions = document.createElement("div");
+  createActions.className = "cmh-create-hub-actions";
+  const createSubmit = document.createElement("button");
+  createSubmit.type = "submit";
+  createSubmit.textContent = "Create and add";
+  const createCancel = document.createElement("button");
+  createCancel.type = "button";
+  createCancel.textContent = "Cancel";
+  createCancel.addEventListener("click", () => {
+    createForm.hidden = true;
+    createButton.hidden = false;
+    createInput.value = "";
+    createInput.setCustomValidity("");
+  });
+  createActions.append(createSubmit, createCancel);
+  createForm.append(createInput, createActions);
+  createForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = createInput.value.trim();
+    if (!name) return createInput.reportValidity();
+    createInput.setCustomValidity("");
+    createInput.disabled = true;
+    createSubmit.disabled = true;
+    createSubmit.textContent = "Creating…";
+    const response = await onCreate(name, source);
+    if (!response?.ok) {
+      createInput.disabled = false;
+      createSubmit.disabled = false;
+      createSubmit.textContent = "Create and add";
+      createInput.setCustomValidity(response?.error || "Could not create the hub");
+      createInput.reportValidity();
+    }
+  });
+  controls.append(createButton, createForm);
+
+  const search = document.createElement("input");
+  search.className = "cmh-hub-search";
+  search.type = "search";
+  search.placeholder = "Search hubs…";
+  search.setAttribute("aria-label", "Search existing hubs");
+  const list = document.createElement("div");
+  list.className = "cmh-hub-list";
+  const ordered = sortedHubChoices(hubs);
+  const draw = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    const filtered = ordered.filter((hub) =>
+      String(hub.name || "").toLocaleLowerCase().includes(query)
+    );
+    list.replaceChildren(...filtered.map((hub) =>
+      menuItem(hub.name, () => onSelect(hub, source))
+    ));
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "cmh-section-note";
+      empty.textContent = query ? "No matching hub." : "No existing hub.";
+      list.append(empty);
+    }
+  };
+  search.addEventListener("input", draw);
+  draw();
+  container.append(controls, menuDivider("Existing hubs"), search, list);
 }
 
 // A model page with a version selected: ask whether to follow the whole model
@@ -349,29 +476,34 @@ function showScopeMenu(hubs, source) {
 function showHubMenu(hubs, source, onBack = null) {
   hubMenu.textContent = "";
   hubMenu.append(menuHeader("Add to which hub?"));
-  if (onBack) hubMenu.append(menuItem("← Back", onBack));
-  for (const hub of hubs) {
-    hubMenu.append(
-      menuItem(hub.name, () => {
-        closeHubMenu();
-        addTo(source, hub.id);
-      })
-    );
-  }
+  renderHubPicker(hubMenu, {
+    hubs, source, onBack,
+    onSelect: (hub) => {
+      closeHubMenu();
+      addTo(source, hub.id);
+    },
+    onCreate: async (name) => {
+      const response = await runtimeMessage({ type: "create-hub-with-source", name, source });
+      if (response?.ok) showAddResult(response);
+      return response;
+    },
+  });
 }
 
 function addTo(source, feedId) {
   chrome.runtime.sendMessage({ type: "add-source", feedId, source }, (res) => {
     if (chrome.runtime.lastError || !res || !res.ok) {
       showResult(`Failed: ${res?.error || chrome.runtime.lastError?.message || "unknown"}`);
-    } else if (res.status === "duplicate") {
-      showResult(`Already in "${res.feedName}"`);
-    } else if (res.status === "merged") {
-      showResult(`Updated in "${res.feedName}" ✓`);
     } else {
-      showResult(`Added to "${res.feedName}" ✓`);
+      showAddResult(res);
     }
   });
+}
+
+function showAddResult(res) {
+  if (res.status === "duplicate") showResult(`Already in "${res.feedName}"`);
+  else if (res.status === "merged") showResult(`Updated in "${res.feedName}" ✓`);
+  else showResult(`Added to "${res.feedName}" ✓`);
 }
 
 let resultTimer;
@@ -382,15 +514,363 @@ function showResult(text) {
   resultTimer = setTimeout(updateWidget, 2500);
 }
 
+let pageActionHost = null;
+
+function isVisibleElement(element) {
+  if (!(element instanceof Element)) return false;
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden";
+}
+
+function clearPageActionPlacement() {
+  pageActionHost?.classList.remove("cmh-page-action-host");
+  pageActionHost = null;
+  delete pageAction.dataset.cmhPlacement;
+  pageAction.remove();
+}
+
+function followControls() {
+  return [...document.querySelectorAll("button, [role='button']")].filter((element) => {
+    if (!isVisibleElement(element) || element.closest("#cmh-page-action")) return false;
+    const label = (element.textContent || "").replace(/\s+/g, " ").trim();
+    return /^\+?\s*(?:follow|unfollow)$/i.test(label);
+  });
+}
+
+function findCreatorFollowControl() {
+  return followControls().sort((a, b) => {
+    const aRect = a.getBoundingClientRect();
+    const bRect = b.getBoundingClientRect();
+    return bRect.width - aRect.width || aRect.top - bRect.top;
+  })[0] || null;
+}
+
+function findCollectionFollowControl() {
+  const heading = [...document.querySelectorAll("h1")].find(isVisibleElement);
+  const headingRect = heading?.getBoundingClientRect();
+  return followControls().sort((a, b) => {
+    if (!headingRect) return a.getBoundingClientRect().top - b.getBoundingClientRect().top;
+    const distance = (element) => {
+      const rect = element.getBoundingClientRect();
+      return Math.abs(rect.top - headingRect.top) + Math.abs(rect.right - headingRect.right) * 0.05;
+    };
+    return distance(a) - distance(b);
+  })[0] || null;
+}
+
+function findCollectionActionRow(follow) {
+  let candidate = follow.parentElement;
+  let best = candidate;
+  for (let depth = 0; candidate && depth < 5; depth += 1, candidate = candidate.parentElement) {
+    const rect = candidate.getBoundingClientRect();
+    if (rect.height > 80 || rect.width > 360) break;
+    const controls = [...candidate.querySelectorAll("button, [role='button']")]
+      .filter(isVisibleElement);
+    if (controls.length >= 2) best = candidate;
+  }
+  return best;
+}
+
+function findUpdatedLabel() {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (/^updated\s*:/i.test((node.nodeValue || "").trim()) && isVisibleElement(node.parentElement)) {
+      return node.parentElement;
+    }
+  }
+  return null;
+}
+
+function findModelStatsRow() {
+  const heading = [...document.querySelectorAll("h1")].find(isVisibleElement);
+  if (!heading) return null;
+  const headingRect = heading.getBoundingClientRect();
+  const updated = findUpdatedLabel();
+  if (updated) {
+    const updatedRect = updated.getBoundingClientRect();
+    for (let cursor = updated; cursor && cursor !== document.body; cursor = cursor.parentElement) {
+      for (let sibling = cursor.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+        if (!isVisibleElement(sibling)) continue;
+        const rect = sibling.getBoundingClientRect();
+        if (rect.height <= 80 && rect.top >= headingRect.bottom - 12 &&
+            rect.top <= updatedRect.top + 8) {
+          return sibling;
+        }
+      }
+    }
+  }
+
+  // Civitai occasionally changes the metadata labels. Keep the control in the
+  // title block in that case, but never return it to the viewport corner.
+  let cursor = heading;
+  for (let depth = 0; cursor.parentElement && depth < 4; depth += 1) {
+    for (let sibling = cursor.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
+      if (!isVisibleElement(sibling)) continue;
+      const rect = sibling.getBoundingClientRect();
+      if (rect.height <= 80 && rect.top <= headingRect.bottom + 80) return sibling;
+      break;
+    }
+    cursor = cursor.parentElement;
+  }
+  return heading.parentElement;
+}
+
+function placePageAction(source) {
+  clearPageActionPlacement();
+
+  if (source.type === "user") {
+    const follow = findCreatorFollowControl();
+    if (!follow?.parentElement) return false;
+    follow.insertAdjacentElement("beforebegin", pageAction);
+    pageAction.dataset.cmhPlacement = "creator";
+    return true;
+  }
+
+  if (source.type === "collection") {
+    const follow = findCollectionFollowControl();
+    if (!follow) return false;
+    pageActionHost = findCollectionActionRow(follow);
+    if (!pageActionHost) return false;
+    pageActionHost.classList.add("cmh-page-action-host");
+    pageActionHost.append(pageAction);
+    pageAction.dataset.cmhPlacement = "collection";
+    return true;
+  }
+
+  if (source.type === "model") {
+    const statsRow = findModelStatsRow();
+    if (!statsRow) return false;
+    statsRow.append(pageAction);
+    pageAction.dataset.cmhPlacement = "model";
+    return true;
+  }
+
+  return false;
+}
+
 function updateWidget() {
   const source = pageSource();
   closeHubMenu();
-  if (source) {
-    addBtn.hidden = false;
+  if (source && placePageAction(source)) {
+    pageAction.hidden = false;
     addBtn.textContent = `+ Add ${sourceCaption(source)} to MultiHub`;
   } else {
-    addBtn.hidden = true;
+    clearPageActionPlacement();
+    pageAction.hidden = true;
   }
+}
+
+// ---------- homepage section add actions ----------
+
+const sectionActionHeadings = new WeakSet();
+
+function isHomePage() {
+  return location.pathname === "/" || location.pathname === "/home";
+}
+
+function sourceFromHref(href, label = "") {
+  let url;
+  try {
+    url = new URL(href, location.origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== location.origin) return null;
+  let match = url.pathname.match(/^\/collections\/(\d+)/i);
+  if (match) return {
+    label: label || `Collection #${match[1]}`,
+    source: { type: "collection", collectionId: Number(match[1]) },
+  };
+  match = url.pathname.match(/^\/models\/(\d+)/i);
+  if (match) {
+    const source = { type: "model", modelId: Number(match[1]) };
+    const versionId = Number(url.searchParams.get("modelVersionId"));
+    if (Number.isSafeInteger(versionId) && versionId > 0) source.versionIds = [versionId];
+    return { label: label || `Model #${match[1]}`, source };
+  }
+  match = url.pathname.match(/^\/user\/([^/?#]+)/i);
+  if (match) {
+    const username = decodeURIComponent(match[1]);
+    return { label: `@${username}`, source: { type: "user", username } };
+  }
+  return null;
+}
+
+function sectionContainer(heading) {
+  let fallback = heading.parentElement;
+  for (let node = heading.parentElement, depth = 0; node && depth < 6; node = node.parentElement, depth += 1) {
+    const imageLinks = node.querySelectorAll('a[href*="/images/"]').length;
+    const sourceLinks = node.querySelectorAll(
+      'a[href*="/user/"], a[href*="/models/"], a[href*="/collections/"]'
+    ).length;
+    if (sourceLinks > 0) fallback = node;
+    if (imageLinks >= 2 && sourceLinks > 0) return node;
+  }
+  return fallback;
+}
+
+function sectionSourceOptions(heading) {
+  const title = heading.dataset.cmhSectionTitle
+    || (heading.textContent || "").replace(/\s+/g, " ").trim();
+  const container = sectionContainer(heading);
+  const options = [];
+  const directCollection = [
+    heading.closest('a[href*="/collections/"]'),
+    heading.querySelector('a[href*="/collections/"]'),
+    ...container.querySelectorAll('a[href*="/collections/"]'),
+  ].filter(Boolean).map((link) => sourceFromHref(link.href, `Collection: ${title}`)).find(Boolean);
+  if (!/^featured images$/i.test(title) && directCollection) return [directCollection];
+
+  for (const link of container.querySelectorAll(
+    'a[href*="/user/"], a[href*="/models/"], a[href*="/collections/"]'
+  )) {
+    const text = (link.textContent || "").replace(/\s+/g, " ").trim();
+    const option = sourceFromHref(link.href, text);
+    if (option) options.push(option);
+  }
+  const seen = new Set();
+  return options.filter(({ source }) => {
+    const key = source.type === "user" ? `u:${source.username.toLocaleLowerCase()}`
+      : source.type === "model" ? `m:${source.modelId}:${(source.versionIds || []).join(",")}`
+        : `c:${source.collectionId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 24);
+}
+
+function setSectionResult(action, text) {
+  const button = action.querySelector(".cmh-section-add");
+  button.textContent = text;
+  clearTimeout(action._resultTimer);
+  action._resultTimer = setTimeout(() => {
+    button.textContent = button.dataset.defaultLabel;
+  }, 2200);
+}
+
+function addSectionSource(action, source, hub) {
+  chrome.runtime.sendMessage({ type: "add-source", feedId: hub.id, source }, (res) => {
+    action.querySelector(".cmh-section-menu").hidden = true;
+    if (chrome.runtime.lastError || !res || !res.ok) {
+      setSectionResult(action, "!");
+    } else if (res.status === "duplicate") {
+      setSectionResult(action, "=");
+    } else {
+      setSectionResult(action, "✓");
+    }
+  });
+}
+
+async function createSectionHub(action, source, name) {
+  const response = await runtimeMessage({ type: "create-hub-with-source", name, source });
+  if (!response?.ok) return response;
+  action.querySelector(".cmh-section-menu").hidden = true;
+  setSectionResult(action, `Added to ${response.feedName} ✓`);
+  return response;
+}
+
+function renderSectionHubChoices(action, option, options, hubs) {
+  const menu = action.querySelector(".cmh-section-menu");
+  menu.replaceChildren(menuTitle(option.label));
+  renderHubPicker(menu, {
+    hubs,
+    source: option.source,
+    onBack: options.length > 1
+      ? () => renderSectionSourceChoices(action, options, hubs) : null,
+    onSelect: (hub) => addSectionSource(action, option.source, hub),
+    onCreate: (name) => createSectionHub(action, option.source, name),
+  });
+}
+
+function renderSectionSourceChoices(action, options, hubs) {
+  const menu = action.querySelector(".cmh-section-menu");
+  menu.replaceChildren(menuTitle("Add which source?"));
+  if (options.length === 0) {
+    const note = document.createElement("div");
+    note.className = "cmh-section-note";
+    note.textContent = "No creator, model or collection link is visible in this section yet.";
+    menu.append(note);
+    return;
+  }
+  for (const option of options) {
+    menu.append(menuItem(option.label, () => renderSectionHubChoices(action, option, options, hubs)));
+  }
+}
+
+function createSectionAction(heading) {
+  heading.dataset.cmhSectionTitle = (heading.textContent || "").replace(/\s+/g, " ").trim();
+  const action = document.createElement("span");
+  action.className = "cmh-section-action";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "cmh-section-add";
+  const featured = /^featured images$/i.test(heading.dataset.cmhSectionTitle);
+  button.dataset.defaultLabel = featured
+    ? "Add Featured Image Collection to MultiHub"
+    : "Add this collection to MultiHub";
+  button.textContent = button.dataset.defaultLabel;
+  button.title = featured
+    ? "Add a source from the Featured Images collection to MultiHub"
+    : "Add this public collection to MultiHub";
+  button.setAttribute("aria-label", button.title);
+  const menu = document.createElement("div");
+  menu.className = "cmh-menu cmh-section-menu";
+  menu.hidden = true;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!menu.hidden) {
+      menu.hidden = true;
+      return;
+    }
+    const options = sectionSourceOptions(heading);
+    chrome.runtime.sendMessage({ type: "get-hubs" }, (res) => {
+      if (chrome.runtime.lastError || !res?.hubs) return setSectionResult(action, "!");
+      if (options.length === 1) renderSectionHubChoices(action, options[0], options, res.hubs);
+      else renderSectionSourceChoices(action, options, res.hubs);
+      menu.hidden = false;
+    });
+  });
+  action.append(button, menu);
+  heading.append(action);
+  return action;
+}
+
+function syncHomepageSectionActions() {
+  if (!isHomePage()) return;
+  for (const heading of document.querySelectorAll("h1, h2, h3, h4")) {
+    if (!isVisibleElement(heading) || sectionActionHeadings.has(heading)) continue;
+    const text = (heading.textContent || "").replace(/\s+/g, " ").trim();
+    const container = sectionContainer(heading);
+    const containerText = (container?.textContent || "").replace(/\s+/g, " ");
+    const publicCollection = /curated collection/i.test(containerText)
+      && Boolean(container?.querySelector('a[href*="/collections/"]'));
+    if (!/^featured images$/i.test(text) && !publicCollection) continue;
+    sectionActionHeadings.add(heading);
+    createSectionAction(heading);
+  }
+}
+
+// A Remix badge in MultiHub opens the canonical Civitai image page with this
+// one-shot marker. Once Civitai has rendered its native Remix control, activate
+// that control and remove the marker so SPA rerenders cannot trigger it twice.
+let remixActivationStarted = false;
+function activateRequestedRemix() {
+  const requested = new URLSearchParams(location.search).get("cmh-remix") === "1";
+  if (!requested || remixActivationStarted || !/^\/images\/\d+/.test(location.pathname)) return;
+  const control = [...document.querySelectorAll('button, a, [role="button"]')].find((element) => {
+    if (!isVisibleElement(element) || element.closest("#cmh-widget, #cmh-page-action, #cmh-overlay")) return false;
+    const label = `${element.textContent || ""} ${element.getAttribute("aria-label") || ""}`.trim();
+    return /^remix\b/i.test(label);
+  });
+  if (!control) return;
+  remixActivationStarted = true;
+  const url = new URL(location.href);
+  url.searchParams.delete("cmh-remix");
+  history.replaceState(history.state, "", url);
+  control.click();
 }
 
 // ---------- signed-in Civitai collection bridge ----------
@@ -614,9 +1094,16 @@ function scanPage() {
   if (location.href !== lastHref) {
     closeOverlay();
     lastHref = location.href;
+    remixActivationStarted = false;
     clearTimeout(resultTimer);
     updateWidget();
+  } else if (pageSource() && !pageAction.isConnected) {
+    // React can render the route before its header controls. Retry only while
+    // the semantic page anchor is absent, and again if a rerender removes it.
+    updateWidget();
   }
+  syncHomepageSectionActions();
+  activateRequestedRemix();
 }
 
 function scheduleScan() {
@@ -625,6 +1112,18 @@ function scheduleScan() {
 }
 
 const pageObserver = new MutationObserver((records) => {
+  const addedHeading = records.some((record) => [...record.addedNodes].some((node) =>
+    node.nodeType === Node.ELEMENT_NODE
+      && (node.matches?.("h1, h2, h3, h4") || node.querySelector?.("h1, h2, h3, h4"))
+  ));
+  if ((isHomePage() && addedHeading)
+      || new URLSearchParams(location.search).get("cmh-remix") === "1") {
+    scheduleScan();
+  }
+  if (pageSource() && !pageAction.isConnected) {
+    scheduleScan();
+    return;
+  }
   if (!document.getElementById("cmh-nav-item")) {
     scheduleScan();
     return;

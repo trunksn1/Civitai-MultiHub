@@ -4,12 +4,21 @@ import assert from "node:assert/strict";
 import {
   importFeed,
   loadConfig,
+  makeFeed,
   mergeSourceIntoFeed,
+  normalizeNewHubName,
   normalizeConfig,
   parseSourceInput,
   persistentConfig,
   saveConfig,
 } from "../extension/storage.js";
+
+test("new hub names are trimmed and bounded before persistence", () => {
+  assert.equal(normalizeNewHubName("  Landscapes  "), "Landscapes");
+  assert.equal(makeFeed("  Landscapes  ").name, "Landscapes");
+  assert.throws(() => normalizeNewHubName("   "), /between 1 and 80/);
+  assert.throws(() => normalizeNewHubName("x".repeat(81)), /between 1 and 80/);
+});
 
 test("parseSourceInput recognizes supported forms and rejects malformed input", () => {
   assert.deepEqual(parseSourceInput("https://civitai.com/models/42?modelVersionId=7"), {
@@ -67,6 +76,7 @@ test("normalizeConfig repairs stored values and deduplicates sources", () => {
   assert.deepEqual(config.settings.browsingLevelsByDomain.standalone, [1, 2]);
   assert.equal(config.feeds[0].globalSort, "newest");
   assert.equal(config.feeds[0].period, "AllTime");
+  assert.equal(config.feeds[0].generationFilter, "all");
   assert.equal(config.feeds[0].sources.length, 1);
   assert.equal(config.activeFeedId, "hub");
 });

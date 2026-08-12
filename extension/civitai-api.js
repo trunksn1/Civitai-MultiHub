@@ -7,12 +7,18 @@
 // can never show mature media. `settings.linkDomain` carries the host the user is
 // actually browsing (the embedding page when embedded, their chosen domain when
 // standalone) and every request below is built against it.
-const API_HOSTS = new Set(["civitai.com", "civitai.red"]);
+import {
+  ALLOWED_BROWSING_LEVELS,
+  ALLOWED_CIVITAI_HOSTS,
+  DEFAULT_CIVITAI_HOST,
+} from "./distribution.js";
+
+const API_HOSTS = ALLOWED_CIVITAI_HOSTS;
 const IMAGE_CDN_BASE = "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA";
 export const PAGE_LIMIT = 30;
 
 export function apiHost(settings) {
-  return API_HOSTS.has(settings?.linkDomain) ? settings.linkDomain : "civitai.com";
+  return API_HOSTS.has(settings?.linkDomain) ? settings.linkDomain : DEFAULT_CIVITAI_HOST;
 }
 
 function apiBase(settings) {
@@ -235,7 +241,9 @@ export function explainCivitaiError(error, {
   if (normalized?.name === "AbortError") return "";
   if (normalized.code === "missing-key") return `${action} requires a Civitai API key.`;
   if (normalized.code === "session-unavailable") {
-    return `${action} needs a signed-in Civitai tab. Open or refresh civitai.com or civitai.red and try again.`;
+    return `${action} needs a signed-in Civitai tab. Open or refresh ${
+      [...API_HOSTS].join(" or ")
+    } and try again.`;
   }
   if (normalized.code === "session-authentication") {
     return `${action} needs you to sign in to Civitai in the open browser tab.`;
@@ -268,6 +276,7 @@ export function explainCivitaiError(error, {
 const modelCache = new Map();
 const collectionCache = new Map();
 const versionCache = new Map();
+const creatorCache = new Map();
 const generationDataCache = new Map();
 const imageCommentsCache = new Map();
 
@@ -275,6 +284,7 @@ export function clearModelCache() {
   modelCache.clear();
   collectionCache.clear();
   versionCache.clear();
+  creatorCache.clear();
   generationDataCache.clear();
   imageCommentsCache.clear();
 }
@@ -744,6 +754,35 @@ export function userAvatarUrl(user, width = 96) {
   return `${IMAGE_CDN_BASE}/${source}/width=${Math.round(width)}/avatar.jpeg`;
 }
 
+export async function resolveCreatorProfile(username, settings, signal) {
+  const normalized = typeof username === "string" ? username.trim() : "";
+  if (!normalized) return null;
+  const key = normalized.toLocaleLowerCase();
+  if (creatorCache.has(key)) return creatorCache.get(key);
+  const input = encodeURIComponent(JSON.stringify({ json: { username: normalized } }));
+  const pending = apiGet(
+    `${trpcBase(settings)}/user.getCreator?input=${input}`,
+    settings,
+    signal
+  ).then((data) => {
+    const user = unwrapTrpcData(data);
+    return user && typeof user === "object" ? user : null;
+  });
+  creatorCache.set(key, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    creatorCache.delete(key);
+    throw error;
+  }
+}
+
+export function imageBuzzAmount(item) {
+  const value = Number(item?.stats?.tippedAmountCountAllTime
+    ?? item?.stats?.tippedAmountCount ?? 0);
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+}
+
 function imagesUrl(settings, params) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -771,6 +810,11 @@ function collectionMediaUrl(src, name, type = "image") {
 
 function normalizeCollectionImage(item) {
   const stats = item.stats || {};
+  const buzzAmount = imageBuzzAmount(item);
+  const modelVersionIds = [...new Set([
+    ...(Array.isArray(item.modelVersionIds) ? item.modelVersionIds : []),
+    ...(Array.isArray(item.modelVersionIdsManual) ? item.modelVersionIdsManual : []),
+  ].map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
   return {
     ...item,
     url: collectionMediaUrl(item.url, item.name, item.type),
@@ -778,6 +822,7 @@ function normalizeCollectionImage(item) {
     username: item.username || item.user?.username || null,
     browsingLevel: Number(item.browsingLevel) || Number(item.nsfwLevel) || 0,
     createdAt: item.createdAt || item.publishedAt || item.sortAt,
+    ...(modelVersionIds.length > 0 ? { modelVersionIds } : {}),
     stats: {
       likeCount: stats.likeCount ?? stats.likeCountAllTime ?? 0,
       heartCount: stats.heartCount ?? stats.heartCountAllTime ?? 0,
@@ -785,6 +830,10 @@ function normalizeCollectionImage(item) {
       cryCount: stats.cryCount ?? stats.cryCountAllTime ?? 0,
       dislikeCount: stats.dislikeCount ?? stats.dislikeCountAllTime ?? 0,
       commentCount: stats.commentCount ?? stats.commentCountAllTime ?? 0,
+      collectedCount: stats.collectedCount ?? stats.collectedCountAllTime ?? 0,
+      collectedCountAllTime: stats.collectedCountAllTime ?? stats.collectedCount ?? 0,
+      tippedAmountCount: buzzAmount,
+      tippedAmountCountAllTime: buzzAmount,
     },
   };
 }
@@ -799,13 +848,18 @@ function normalizeUsername(value) {
 }
 
 function normalizeImage(item) {
+  const modelVersionIds = [...new Set([
+    ...(Array.isArray(item?.modelVersionIds) ? item.modelVersionIds : []),
+    ...(Array.isArray(item?.modelVersionIdsManual) ? item.modelVersionIdsManual : []),
+  ].map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
   return {
     ...item,
     username: normalizeUsername(item?.username) || normalizeUsername(item?.user),
+    ...(modelVersionIds.length > 0 ? { modelVersionIds } : {}),
   };
 }
 
-export const BROWSING_LEVEL_VALUES = Object.freeze([1, 2, 4, 8, 16]);
+export const BROWSING_LEVEL_VALUES = ALLOWED_BROWSING_LEVELS;
 export const BROWSING_LEVEL_LABELS = Object.freeze({ 1: "PG", 2: "PG-13", 4: "R", 8: "X", 16: "XXX" });
 
 export function levelsFromMask(mask) {

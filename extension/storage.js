@@ -1,8 +1,24 @@
 // Config schema, chrome.storage wrapper, export/import.
 // Supports multiple hubs (feeds); migrates the old single-feed format.
 
+import {
+  ALLOWED_BROWSING_LEVELS,
+  ALLOWED_CIVITAI_HOSTS,
+  DEFAULT_CIVITAI_HOST,
+} from "./distribution.js";
+
+const defaultBrowsingLevelsByDomain = Object.fromEntries([
+  ...[...ALLOWED_CIVITAI_HOSTS].map((host) => [
+    host,
+    host === "civitai.red"
+      ? [...ALLOWED_BROWSING_LEVELS]
+      : ALLOWED_BROWSING_LEVELS.filter((level) => level <= 2),
+  ]),
+  ["standalone", ALLOWED_BROWSING_LEVELS.filter((level) => level <= 2)],
+]);
+
 const DEFAULT_SETTINGS = {
-  linkDomain: "civitai.com", // civitai.com | civitai.red
+  linkDomain: DEFAULT_CIVITAI_HOST,
   apiKey: "",
   rememberApiKey: false, // preference only; the key remains a separate storage entry
   maxVersionsPerModel: 10, // safety cap when following "all versions" of a model
@@ -11,11 +27,7 @@ const DEFAULT_SETTINGS = {
   // on each host, which is the only thing that sets it. These are the fallbacks
   // used until that read succeeds: civitai.com never serves above PG-13 whatever
   // is asked for; civitai.red is the mature host, so nothing is withheld there.
-  browsingLevelsByDomain: {
-    "civitai.com": [1, 2],
-    "civitai.red": [1, 2, 4, 8, 16],
-    standalone: [1, 2],
-  },
+  browsingLevelsByDomain: defaultBrowsingLevelsByDomain,
 };
 const API_KEY_SESSION = "apiKey";
 const API_KEY_LOCAL = "apiKey";
@@ -25,6 +37,7 @@ const DEFAULT_FEED = {
   globalSort: "newest", // newest | oldest | reactions | comments
   period: "AllTime",
   mediaType: "all", // all | image | video
+  generationFilter: "all", // all | no-metadata | prompt | resources | complete-metadata
   hideViewed: false,
   aspectRatio: "all", // all | portrait | landscape | square
   density: "comfortable", // comfortable | compact
@@ -46,11 +59,15 @@ const LIMITS = {
   hiddenCreators: 200,
   viewedIds: 3000,
 };
+export const MAX_HUBS = LIMITS.feeds;
 const SORTS = new Set(["newest", "oldest", "reactions", "comments"]);
 const PERIODS = new Set(["AllTime", "Year", "Month", "Week", "Day"]);
-const DOMAINS = new Set(["civitai.com", "civitai.red"]);
-const BROWSING_LEVELS = new Set([1, 2, 4, 8, 16]);
+const DOMAINS = ALLOWED_CIVITAI_HOSTS;
+const BROWSING_LEVELS = new Set(ALLOWED_BROWSING_LEVELS);
 const MEDIA_TYPES = new Set(["all", "image", "video"]);
+const GENERATION_FILTERS = new Set([
+  "all", "no-metadata", "prompt", "resources", "complete-metadata",
+]);
 const ASPECT_RATIOS = new Set(["all", "portrait", "landscape", "square"]);
 const DENSITIES = new Set(["comfortable", "compact"]);
 
@@ -129,12 +146,18 @@ export function normalizeFeed(value, { strict = false } = {}) {
   }
   if (strict && !SORTS.has(value.globalSort)) throw new Error("Invalid hub sort");
   if (strict && !PERIODS.has(value.period)) throw new Error("Invalid hub period");
+  if (strict && value.generationFilter !== undefined
+      && !GENERATION_FILTERS.has(value.generationFilter)) {
+    throw new Error("Invalid generation details filter");
+  }
   const feed = {
     id: usableId(value.id),
     name: boundedText(value.name, LIMITS.name, DEFAULT_FEED.name),
     globalSort: SORTS.has(value.globalSort) ? value.globalSort : DEFAULT_FEED.globalSort,
     period: PERIODS.has(value.period) ? value.period : DEFAULT_FEED.period,
     mediaType: MEDIA_TYPES.has(value.mediaType) ? value.mediaType : DEFAULT_FEED.mediaType,
+    generationFilter: GENERATION_FILTERS.has(value.generationFilter)
+      ? value.generationFilter : DEFAULT_FEED.generationFilter,
     hideViewed: value.hideViewed === true,
     aspectRatio: ASPECT_RATIOS.has(value.aspectRatio) ? value.aspectRatio : DEFAULT_FEED.aspectRatio,
     density: DENSITIES.has(value.density) ? value.density : DEFAULT_FEED.density,
@@ -202,8 +225,15 @@ export function newId() {
   return crypto.randomUUID();
 }
 
+export function normalizeNewHubName(value) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > LIMITS.name) {
+    throw new Error(`Hub name must be between 1 and ${LIMITS.name} characters`);
+  }
+  return value.trim();
+}
+
 export function makeFeed(name) {
-  return { ...DEFAULT_FEED, id: newId(), name, sources: [] };
+  return { ...DEFAULT_FEED, id: newId(), name: normalizeNewHubName(name), sources: [] };
 }
 
 export async function loadConfig() {
