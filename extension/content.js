@@ -39,10 +39,97 @@ function pageSource() {
   return null;
 }
 
+const pageModelInfoCache = new Map();
+
+function modelKindLabel(type) {
+  const normalized = String(type || "").replace(/[\s_-]+/g, "").toLocaleUpperCase();
+  if (normalized === "LORA") return "LoRA";
+  if (normalized === "TEXTUALINVERSION" || normalized === "EMBEDDING") return "Embedding";
+  if (normalized.includes("CHECKPOINT")) return "Checkpoint";
+  return "Model";
+}
+
+async function loadPageModelInfo(modelId) {
+  if (pageModelInfoCache.has(modelId)) return pageModelInfoCache.get(modelId);
+  const pending = fetch(`/api/v1/models/${modelId}`).then(async (response) => {
+    if (!response.ok) throw new Error(`Model metadata returned HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      kind: modelKindLabel(data.type),
+      versions: (Array.isArray(data.modelVersions) ? data.modelVersions : [])
+        .map((version) => ({ id: Number(version.id), name: String(version.name || "").trim() }))
+        .filter((version) => Number.isSafeInteger(version.id) && version.id > 0),
+    };
+  }).catch((error) => {
+    pageModelInfoCache.delete(modelId);
+    throw error;
+  });
+  pageModelInfoCache.set(modelId, pending);
+  return pending;
+}
+
+function selectedPageVersionId(info, source) {
+  if (Number.isSafeInteger(source.versionId) && source.versionId > 0) return source.versionId;
+  const exactName = new Map(info.versions.map((version) => [version.name.toLocaleLowerCase(), version.id]));
+  const candidates = [...document.querySelectorAll('button, a, [role="tab"], [role="button"]')]
+    .filter(isVisibleElement).map((element) => {
+      const text = String(element.textContent || "").replace(/\s+/g, " ").trim();
+      const id = exactName.get(text.toLocaleLowerCase());
+      if (!id) return null;
+      const href = element.getAttribute("href") || element.closest("a[href]")?.getAttribute("href") || "";
+      const hrefVersion = Number(new URL(href || location.href, location.origin).searchParams.get("modelVersionId"));
+      const selected = element.getAttribute("aria-selected") === "true"
+        || element.getAttribute("aria-current") === "true"
+        || element.dataset.active === "true"
+        || /(?:^|\s)(?:active|selected)(?:\s|$)/i.test(String(element.className || ""));
+      const rgb = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) || [];
+      const colorScore = rgb.length === 3 ? Math.max(...rgb) - Math.min(...rgb) : 0;
+      return {
+        id: Number.isSafeInteger(hrefVersion) && hrefVersion > 0 ? hrefVersion : id,
+        score: selected ? 1000 : colorScore,
+      };
+    }).filter(Boolean);
+  const styled = [...candidates].sort((a, b) => b.score - a.score)[0];
+  return (styled?.score >= 20 ? styled.id : null)
+    || candidates[0]?.id || info.versions[0]?.id || null;
+}
+
+function selectedPageVersion(info, source) {
+  const id = selectedPageVersionId(info, source);
+  const version = info.versions.find((candidate) => candidate.id === id);
+  return id ? { id, name: version?.name || `Version ${id}` } : null;
+}
+
+async function enrichedPageModelSource(source) {
+  if (source.type !== "model") return source;
+  const info = await loadPageModelInfo(source.modelId);
+  const version = selectedPageVersion(info, source);
+  return {
+    ...source,
+    modelKind: info.kind,
+    versionCount: info.versions.length,
+    versionId: version?.id || null,
+    versionName: version?.name || "",
+  };
+}
+
 function sourceCaption(source) {
-  if (source.type === "model") return "this model";
+  if (source.type === "model") return `this ${String(source.modelKind || "model").toLocaleLowerCase()}`;
   if (source.type === "collection") return "this collection";
   return `@${source.username}`;
+}
+
+function pageActionLabel(source) {
+  return source.type === "model"
+    ? `Add ${source.modelKind || "Model"} to MultiHub`
+    : `+ Add ${sourceCaption(source)} to MultiHub`;
+}
+
+function labelPageAction(source) {
+  const title = `Add ${sourceCaption(source)} to MultiHub`;
+  addBtn.textContent = pageActionLabel(source);
+  addBtn.title = title;
+  addBtn.setAttribute("aria-label", title);
 }
 
 // ---------- ribbon injection ----------
@@ -263,27 +350,35 @@ pageAction.id = "cmh-page-action";
 pageAction.hidden = true;
 
 const hubMenu = document.createElement("div");
-hubMenu.className = "cmh-menu";
+hubMenu.className = "cmh-menu cmh-page-menu";
 hubMenu.hidden = true;
 
 pageAction.append(hubMenu, addBtn);
 widget.append(openBtn);
 document.documentElement.append(widget);
 
-function onAddClick(event) {
+async function onAddClick(event) {
   event.preventDefault();
   event.stopPropagation();
-  const source = pageSource();
+  let source = pageSource();
   if (!source) return;
   if (!hubMenu.hidden) {
     closeHubMenu();
     return;
   }
   clearTimeout(resultTimer);
-  addBtn.textContent = `+ Add ${sourceCaption(source)} to MultiHub`;
+  if (source.type === "model") {
+    try {
+      source = await enrichedPageModelSource(source);
+    } catch {
+      // If Civitai's public metadata is unavailable, adding all versions still works.
+    }
+  }
+  labelPageAction(source);
   chrome.runtime.sendMessage({ type: "get-hubs" }, (res) => {
     if (chrome.runtime.lastError || !res) return showResult("Error — reload the page");
-    if (source.type === "model" && source.versionId) {
+    if (source.type === "model" && source.versionId
+        && (source.versionCount === undefined || source.versionCount > 1)) {
       showScopeMenu(res.hubs, source);
     } else {
       showHubMenu(res.hubs, {
@@ -293,7 +388,29 @@ function onAddClick(event) {
         collectionId: source.collectionId,
       });
     }
-    hubMenu.hidden = false;
+    openPageHubMenu();
+  });
+}
+
+function openPageHubMenu() {
+  document.documentElement.append(hubMenu);
+  hubMenu.hidden = false;
+  positionPageHubMenu();
+}
+
+function positionPageHubMenu() {
+  requestAnimationFrame(() => {
+    if (hubMenu.hidden || !hubMenu.isConnected || !addBtn.isConnected) return;
+    hubMenu.style.removeProperty("top");
+    hubMenu.style.removeProperty("left");
+    const anchor = addBtn.getBoundingClientRect();
+    const rect = hubMenu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(anchor.left, innerWidth - rect.width - 8));
+    const below = anchor.bottom + 8;
+    const above = anchor.top - rect.height - 8;
+    const top = below + rect.height <= innerHeight - 8 || above < 8 ? below : above;
+    hubMenu.style.left = `${Math.round(left)}px`;
+    hubMenu.style.top = `${Math.round(Math.max(8, top))}px`;
   });
 }
 
@@ -307,6 +424,9 @@ function menuTitle(text) {
 function closeHubMenu() {
   hubMenu.hidden = true;
   hubMenu.replaceChildren();
+  hubMenu.style.removeProperty("top");
+  hubMenu.style.removeProperty("left");
+  if (pageAction.isConnected) pageAction.prepend(hubMenu);
 }
 
 function menuHeader(text) {
@@ -386,7 +506,7 @@ function renderHubPicker(container, { hubs, source, onBack = null, onSelect, onC
   createForm.hidden = true;
   const createInput = document.createElement("input");
   createInput.type = "text";
-  createInput.maxLength = 80;
+  createInput.maxLength = 30;
   createInput.placeholder = "New hub name";
   createInput.setAttribute("aria-label", "New hub name");
   createInput.required = true;
@@ -454,8 +574,8 @@ function renderHubPicker(container, { hubs, source, onBack = null, onSelect, onC
   container.append(controls, menuDivider("Existing hubs"), search, list);
 }
 
-// A model page with a version selected: ask whether to follow the whole model
-// or only that version, then ask which hub.
+// Multi-version model pages ask whether to follow the whole model or only the
+// version currently shown, then ask which hub. Single-version models skip this step.
 function showScopeMenu(hubs, source) {
   hubMenu.textContent = "";
   hubMenu.append(
@@ -463,14 +583,20 @@ function showScopeMenu(hubs, source) {
     menuItem("All versions", () =>
       showHubMenu(hubs, { type: "model", modelId: source.modelId }, () => showScopeMenu(hubs, source))
     ),
-    menuItem("Only the selected version", () =>
+    menuItem("Only the current version", () =>
       showHubMenu(
         hubs,
-        { type: "model", modelId: source.modelId, versionIds: [source.versionId] },
+        {
+          type: "model",
+          modelId: source.modelId,
+          versionIds: [source.versionId],
+          versionNames: { [source.versionId]: source.versionName },
+        },
         () => showScopeMenu(hubs, source)
       )
     )
   );
+  positionPageHubMenu();
 }
 
 function showHubMenu(hubs, source, onBack = null) {
@@ -488,6 +614,7 @@ function showHubMenu(hubs, source, onBack = null) {
       return response;
     },
   });
+  positionPageHubMenu();
 }
 
 function addTo(source, feedId) {
@@ -525,7 +652,7 @@ function isVisibleElement(element) {
 }
 
 function clearPageActionPlacement() {
-  pageActionHost?.classList.remove("cmh-page-action-host");
+  pageActionHost?.classList.remove("cmh-page-action-host", "cmh-model-action-host");
   pageActionHost = null;
   delete pageAction.dataset.cmhPlacement;
   pageAction.remove();
@@ -573,48 +700,61 @@ function findCollectionActionRow(follow) {
   return best;
 }
 
-function findUpdatedLabel() {
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (/^updated\s*:/i.test((node.nodeValue || "").trim()) && isVisibleElement(node.parentElement)) {
-      return node.parentElement;
-    }
-  }
-  return null;
+function controlLabel(element) {
+  return [element.textContent, element.getAttribute("aria-label"), element.getAttribute("title")]
+    .filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function findModelStatsRow() {
+function findModelHeaderActionGroup() {
   const heading = [...document.querySelectorAll("h1")].find(isVisibleElement);
   if (!heading) return null;
   const headingRect = heading.getBoundingClientRect();
-  const updated = findUpdatedLabel();
-  if (updated) {
-    const updatedRect = updated.getBoundingClientRect();
-    for (let cursor = updated; cursor && cursor !== document.body; cursor = cursor.parentElement) {
-      for (let sibling = cursor.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
-        if (!isVisibleElement(sibling)) continue;
-        const rect = sibling.getBoundingClientRect();
-        if (rect.height <= 80 && rect.top >= headingRect.bottom - 12 &&
-            rect.top <= updatedRect.top + 8) {
-          return sibling;
-        }
-      }
-    }
-  }
+  const controls = [...document.querySelectorAll('button, a, [role="button"]')]
+    .filter((element) => {
+      if (!isVisibleElement(element) || element.closest("#cmh-page-action")) return false;
+      const rect = element.getBoundingClientRect();
+      const sameHeaderRow = rect.bottom >= headingRect.top - 16
+        && rect.top <= headingRect.bottom + 20;
+      return sameHeaderRow && rect.left > headingRect.right + 8;
+    });
+  const info = controls.find((element) => /\b(?:info|information|model details)\b/i.test(controlLabel(element)))
+    || controls.filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return !String(element.textContent || "").trim() && element.querySelector("svg")
+        && rect.width <= 56 && rect.height <= 56;
+    }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0];
+  if (!info) return null;
 
-  // Civitai occasionally changes the metadata labels. Keep the control in the
-  // title block in that case, but never return it to the viewport corner.
-  let cursor = heading;
-  for (let depth = 0; cursor.parentElement && depth < 4; depth += 1) {
-    for (let sibling = cursor.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
-      if (!isVisibleElement(sibling)) continue;
-      const rect = sibling.getBoundingClientRect();
-      if (rect.height <= 80 && rect.top <= headingRect.bottom + 80) return sibling;
-      break;
-    }
-    cursor = cursor.parentElement;
+  let group = info;
+  for (let node = info.parentElement, depth = 0; node && depth < 4; node = node.parentElement, depth += 1) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width > 280 || rect.height > 72) break;
+    const containedControls = [...node.querySelectorAll('button, a, [role="button"]')]
+      .filter(isVisibleElement);
+    if (containedControls.length >= 2) group = node;
   }
-  return heading.parentElement;
+  return group;
+}
+
+function findModelSidebarActionRow() {
+  const heading = [...document.querySelectorAll("h1")].find(isVisibleElement);
+  if (!heading) return null;
+  const headingRect = heading.getBoundingClientRect();
+  const candidates = [...document.querySelectorAll("div, section")].map((element) => {
+    if (!isVisibleElement(element) || element.closest("#cmh-page-action")) return null;
+    const rect = element.getBoundingClientRect();
+    if (rect.top < headingRect.bottom + 60 || rect.left < innerWidth * 0.45
+        || rect.width < 220 || rect.width > 520 || rect.height < 36 || rect.height > 90) return null;
+    const controls = [...element.querySelectorAll('button, a, [role="button"]')]
+      .filter(isVisibleElement);
+    if (controls.length < 5 || controls.length > 10) return null;
+    return { element, rect, controls };
+  }).filter(Boolean);
+  candidates.sort((a, b) =>
+    Math.abs(a.controls.length - 7) - Math.abs(b.controls.length - 7)
+      || a.rect.height - b.rect.height || a.rect.top - b.rect.top
+  );
+  return candidates[0]?.element || null;
 }
 
 function placePageAction(source) {
@@ -640,9 +780,16 @@ function placePageAction(source) {
   }
 
   if (source.type === "model") {
-    const statsRow = findModelStatsRow();
-    if (!statsRow) return false;
-    statsRow.append(pageAction);
+    const actionRow = findModelSidebarActionRow();
+    if (actionRow) {
+      pageActionHost = actionRow;
+      pageActionHost.classList.add("cmh-model-action-host");
+      pageActionHost.append(pageAction);
+    } else {
+      const actionGroup = findModelHeaderActionGroup();
+      if (!actionGroup?.parentElement) return false;
+      actionGroup.insertAdjacentElement("beforebegin", pageAction);
+    }
     pageAction.dataset.cmhPlacement = "model";
     return true;
   }
@@ -655,7 +802,15 @@ function updateWidget() {
   closeHubMenu();
   if (source && placePageAction(source)) {
     pageAction.hidden = false;
-    addBtn.textContent = `+ Add ${sourceCaption(source)} to MultiHub`;
+    labelPageAction(source);
+    if (source.type === "model") {
+      loadPageModelInfo(source.modelId).then((info) => {
+        const current = pageSource();
+        if (current?.type === "model" && current.modelId === source.modelId) {
+          labelPageAction({ ...source, modelKind: info.kind });
+        }
+      }).catch(() => {});
+    }
   } else {
     clearPageActionPlacement();
     pageAction.hidden = true;
@@ -665,6 +820,47 @@ function updateWidget() {
 // ---------- homepage section add actions ----------
 
 const sectionActionHeadings = new WeakSet();
+const sectionActionMenus = new WeakMap();
+let openSectionAction = null;
+
+function sectionMenu(action) {
+  return sectionActionMenus.get(action);
+}
+
+function closeSectionMenu(action = openSectionAction) {
+  if (!action) return;
+  const menu = sectionMenu(action);
+  if (!menu) return;
+  menu.hidden = true;
+  menu.style.removeProperty("top");
+  menu.style.removeProperty("left");
+  if (action.isConnected) action.append(menu);
+  else menu.remove();
+  if (openSectionAction === action) openSectionAction = null;
+}
+
+function openSectionMenu(action) {
+  if (openSectionAction && openSectionAction !== action) closeSectionMenu(openSectionAction);
+  const menu = sectionMenu(action);
+  document.documentElement.append(menu);
+  menu.hidden = false;
+  openSectionAction = action;
+  positionSectionMenu(action);
+}
+
+function positionSectionMenu(action) {
+  const menu = sectionMenu(action);
+  const button = action.querySelector(".cmh-section-add");
+  if (!menu || menu.hidden || !button?.isConnected) return;
+  const anchor = button.getBoundingClientRect();
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchor.left, innerWidth - rect.width - 8));
+  const below = anchor.bottom + 7;
+  const above = anchor.top - rect.height - 7;
+  const top = below + rect.height <= innerHeight - 8 || above < 8 ? below : above;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(Math.max(8, top))}px`;
+}
 
 function isHomePage() {
   return location.pathname === "/" || location.pathname === "/home";
@@ -711,17 +907,70 @@ function sectionContainer(heading) {
   return fallback;
 }
 
+function collectionOptionNearHeading(heading, title) {
+  for (let node = heading.parentElement, depth = 0; node && depth < 5; node = node.parentElement, depth += 1) {
+    const links = [...node.querySelectorAll('a[href*="/collections/"]')];
+    const direct = links.map((link) => sourceFromHref(link.href, `Collection: ${title}`)).find(Boolean);
+    if (direct) return direct;
+    const viewCollection = [...node.querySelectorAll('a[href]')].find((link) =>
+      /^view collection$/i.test((link.textContent || "").replace(/\s+/g, " ").trim())
+    );
+    if (viewCollection) {
+      const option = sourceFromHref(viewCollection.href, `Collection: ${title}`);
+      if (option) return option;
+    }
+  }
+  return null;
+}
+
+function collectionOptionFromPageData(title) {
+  const wanted = String(title || "").toLocaleLowerCase();
+  if (!wanted) return null;
+  const positive = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0
+    ? Number(value) : null;
+  for (const script of document.querySelectorAll('script[type="application/json"]')) {
+    let root;
+    try {
+      root = JSON.parse(script.textContent || "");
+    } catch {
+      continue;
+    }
+    const queue = [root];
+    let visited = 0;
+    while (queue.length && visited < 100000) {
+      const value = queue.pop();
+      visited += 1;
+      if (!value || typeof value !== "object") continue;
+      if (!Array.isArray(value)) {
+        const metadataTitle = String(value.metadata?.title || "").toLocaleLowerCase();
+        const collectionTitle = String(value.collection?.name || "").toLocaleLowerCase();
+        const id = metadataTitle === wanted
+          ? positive(value.collection?.id ?? value.metadata?.collection?.id)
+          : collectionTitle === wanted
+            ? positive(value.collection?.id) : null;
+        if (id) return {
+          label: `Collection: ${title}`,
+          source: { type: "collection", collectionId: id },
+        };
+      }
+      queue.push(...(Array.isArray(value) ? value : Object.values(value)));
+    }
+  }
+  return null;
+}
+
 function sectionSourceOptions(heading) {
   const title = heading.dataset.cmhSectionTitle
     || (heading.textContent || "").replace(/\s+/g, " ").trim();
   const container = sectionContainer(heading);
   const options = [];
-  const directCollection = [
+  const directCollection = collectionOptionNearHeading(heading, title)
+    || collectionOptionFromPageData(title) || [
     heading.closest('a[href*="/collections/"]'),
     heading.querySelector('a[href*="/collections/"]'),
     ...container.querySelectorAll('a[href*="/collections/"]'),
   ].filter(Boolean).map((link) => sourceFromHref(link.href, `Collection: ${title}`)).find(Boolean);
-  if (!/^featured images$/i.test(title) && directCollection) return [directCollection];
+  if (directCollection) return [directCollection];
 
   for (const link of container.querySelectorAll(
     'a[href*="/user/"], a[href*="/models/"], a[href*="/collections/"]'
@@ -752,7 +1001,7 @@ function setSectionResult(action, text) {
 
 function addSectionSource(action, source, hub) {
   chrome.runtime.sendMessage({ type: "add-source", feedId: hub.id, source }, (res) => {
-    action.querySelector(".cmh-section-menu").hidden = true;
+    closeSectionMenu(action);
     if (chrome.runtime.lastError || !res || !res.ok) {
       setSectionResult(action, "!");
     } else if (res.status === "duplicate") {
@@ -766,13 +1015,13 @@ function addSectionSource(action, source, hub) {
 async function createSectionHub(action, source, name) {
   const response = await runtimeMessage({ type: "create-hub-with-source", name, source });
   if (!response?.ok) return response;
-  action.querySelector(".cmh-section-menu").hidden = true;
+  closeSectionMenu(action);
   setSectionResult(action, `Added to ${response.feedName} ✓`);
   return response;
 }
 
 function renderSectionHubChoices(action, option, options, hubs) {
-  const menu = action.querySelector(".cmh-section-menu");
+  const menu = sectionMenu(action);
   menu.replaceChildren(menuTitle(option.label));
   renderHubPicker(menu, {
     hubs,
@@ -782,10 +1031,11 @@ function renderSectionHubChoices(action, option, options, hubs) {
     onSelect: (hub) => addSectionSource(action, option.source, hub),
     onCreate: (name) => createSectionHub(action, option.source, name),
   });
+  positionSectionMenu(action);
 }
 
 function renderSectionSourceChoices(action, options, hubs) {
-  const menu = action.querySelector(".cmh-section-menu");
+  const menu = sectionMenu(action);
   menu.replaceChildren(menuTitle("Add which source?"));
   if (options.length === 0) {
     const note = document.createElement("div");
@@ -797,6 +1047,7 @@ function renderSectionSourceChoices(action, options, hubs) {
   for (const option of options) {
     menu.append(menuItem(option.label, () => renderSectionHubChoices(action, option, options, hubs)));
   }
+  positionSectionMenu(action);
 }
 
 function createSectionAction(heading) {
@@ -808,7 +1059,7 @@ function createSectionAction(heading) {
   button.className = "cmh-section-add";
   const featured = /^featured images$/i.test(heading.dataset.cmhSectionTitle);
   button.dataset.defaultLabel = featured
-    ? "Add Featured Image Collection to MultiHub"
+    ? "Add Featured to MultiHub"
     : "Add this collection to MultiHub";
   button.textContent = button.dataset.defaultLabel;
   button.title = featured
@@ -818,20 +1069,35 @@ function createSectionAction(heading) {
   const menu = document.createElement("div");
   menu.className = "cmh-menu cmh-section-menu";
   menu.hidden = true;
-  button.addEventListener("click", (event) => {
+  sectionActionMenus.set(action, menu);
+  button.addEventListener("click", async (event) => {
     event.preventDefault();
     event.stopPropagation();
     if (!menu.hidden) {
-      menu.hidden = true;
+      closeSectionMenu(action);
       return;
     }
+    const loading = document.createElement("div");
+    loading.className = "cmh-section-note";
+    loading.textContent = "Loading hubs…";
+    menu.replaceChildren(loading);
+    openSectionMenu(action);
+    await new Promise(requestAnimationFrame);
+    if (!action.isConnected || openSectionAction !== action) return;
     const options = sectionSourceOptions(heading);
-    chrome.runtime.sendMessage({ type: "get-hubs" }, (res) => {
-      if (chrome.runtime.lastError || !res?.hubs) return setSectionResult(action, "!");
-      if (options.length === 1) renderSectionHubChoices(action, options[0], options, res.hubs);
-      else renderSectionSourceChoices(action, options, res.hubs);
-      menu.hidden = false;
-    });
+    const res = await runtimeMessage({ type: "get-hubs" });
+    if (!action.isConnected || openSectionAction !== action) return;
+    if (!res?.hubs) {
+      const error = document.createElement("div");
+      error.className = "cmh-section-note";
+      error.textContent = "Could not load your hubs. Reload this Civitai tab and try again.";
+      menu.replaceChildren(error);
+      positionSectionMenu(action);
+      return;
+    }
+    if (options.length === 1) renderSectionHubChoices(action, options[0], options, res.hubs);
+    else renderSectionSourceChoices(action, options, res.hubs);
+    positionSectionMenu(action);
   });
   action.append(button, menu);
   heading.append(action);
@@ -1020,7 +1286,7 @@ async function handleAccountRequest(message) {
   } else if (message.operation === "list-writable-collections") {
     ({ procedure, request } = prepareTrpcGet(
       "collection.getAllUser",
-      { permissions: ["ADD", "ADD_REVIEW"] }
+      { permissions: ["ADD", "ADD_REVIEW"], type: "Image" }
     ));
   } else if (message.operation === "get-collection") {
     const collectionId = positiveId(message.collectionId);
@@ -1033,10 +1299,17 @@ async function handleAccountRequest(message) {
   } else if (message.operation === "add-image-to-collection") {
     procedure = "collection.saveItem";
     const imageId = positiveId(message.imageId);
-    const collectionId = positiveId(message.collection?.id);
-    const userId = positiveId(message.collection?.userId);
-    const read = String(message.collection?.read || "");
-    if (!imageId || !collectionId || !userId || !/^[A-Za-z_]{1,32}$/.test(read)) {
+    const requestedCollections = Array.isArray(message.collections)
+      ? message.collections : [message.collection];
+    const collections = requestedCollections.slice(0, 50).map((collection) => ({
+      collectionId: positiveId(collection?.id),
+      userId: positiveId(collection?.userId),
+      read: String(collection?.read || ""),
+      tagId: null,
+    }));
+    if (!imageId || requestedCollections.length === 0 || requestedCollections.length > 50
+        || collections.some(({ collectionId, userId, read }) =>
+          !collectionId || !userId || !/^[A-Za-z_]{1,32}$/.test(read))) {
       return { ok: false, code: "invalid-request" };
     }
     request = {
@@ -1048,7 +1321,7 @@ async function handleAccountRequest(message) {
         json: {
           type: "Image",
           imageId,
-          collections: [{ collectionId, userId, read, tagId: null }],
+          collections,
         },
       }),
     };
@@ -1092,6 +1365,7 @@ function scanPage() {
   openBtn.hidden = ensureNavButton();
   positionOverlay();
   if (location.href !== lastHref) {
+    closeSectionMenu();
     closeOverlay();
     lastHref = location.href;
     remixActivationStarted = false;
@@ -1100,6 +1374,12 @@ function scanPage() {
   } else if (pageSource() && !pageAction.isConnected) {
     // React can render the route before its header controls. Retry only while
     // the semantic page anchor is absent, and again if a rerender removes it.
+    updateWidget();
+  } else if (pageSource()?.type === "model"
+      && !pageActionHost?.classList.contains("cmh-model-action-host")
+      && findModelSidebarActionRow()) {
+    // The right-side action card often arrives after the title. Move the
+    // control into that card as soon as its native action row is available.
     updateWidget();
   }
   syncHomepageSectionActions();
@@ -1124,6 +1404,14 @@ const pageObserver = new MutationObserver((records) => {
     scheduleScan();
     return;
   }
+  const addedControls = records.some((record) => [...record.addedNodes].some((node) =>
+    node.nodeType === Node.ELEMENT_NODE
+      && (node.matches?.("button, [role='button']") || node.querySelector?.("button, [role='button']"))
+  ));
+  if (pageSource()?.type === "model" && addedControls
+      && !pageActionHost?.classList.contains("cmh-model-action-host")) {
+    scheduleScan();
+  }
   if (!document.getElementById("cmh-nav-item")) {
     scheduleScan();
     return;
@@ -1145,8 +1433,26 @@ for (const method of ["pushState", "replaceState"]) {
   };
 }
 window.addEventListener("popstate", scheduleScan);
-window.addEventListener("resize", positionOverlay);
+window.addEventListener("resize", () => {
+  positionOverlay();
+  if (!hubMenu.hidden) positionPageHubMenu();
+  if (openSectionAction) positionSectionMenu(openSectionAction);
+});
+window.addEventListener("scroll", () => {
+  if (!hubMenu.hidden) positionPageHubMenu();
+  if (openSectionAction) positionSectionMenu(openSectionAction);
+}, true);
+document.addEventListener("click", (event) => {
+  if (!hubMenu.hidden && !pageAction.contains(event.target) && !hubMenu.contains(event.target)) {
+    closeHubMenu();
+  }
+  if (!openSectionAction) return;
+  const menu = sectionMenu(openSectionAction);
+  if (!openSectionAction.contains(event.target) && !menu?.contains(event.target)) closeSectionMenu();
+});
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !hubMenu.hidden) closeHubMenu();
+  if (event.key === "Escape" && openSectionAction) closeSectionMenu();
   if (event.key === "Escape" && !overlay.hidden) closeOverlay();
 });
 updateWidget();

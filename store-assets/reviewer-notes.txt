@@ -1,0 +1,32 @@
+MULTIHUB FOR CIVITAI - REVIEWER NOTES
+
+PACKAGE SCOPE
+This is the marketplace-specific build. It requests access only to https://civitai.com/* and permits only browsing levels 1 and 2 (PG and PG-13). It does not inject into, request privileged access to, or select civitai.red. The full GitHub/manual package has a wider scope and is not the package submitted to either marketplace.
+
+CORE TEST FLOW (NO ACCOUNT OR API KEY REQUIRED)
+1. Install the extension.
+2. Open https://civitai.com/ and refresh the page if it was already open during installation.
+3. Click the extension toolbar action to open the standalone MultiHub feed.
+4. Create or select a hub.
+5. On a public Civitai creator, model, or image-collection page, click “Add … to MultiHub” and choose the hub.
+6. Return to the MultiHub tab or embedded panel and confirm that public media loads and can be sorted and filtered.
+
+ACCOUNT-BACKED FEATURES
+No Civitai account is required for the core feed workflow. Comments, the reviewer's owned image collections, generation data, and user-triggered writes can use the reviewer's own signed-in Civitai tab. Reactions can use an optional Civitai API key. No reviewer credentials are embedded in the package or required to verify the core purpose.
+
+NETWORK AND DATA
+The extension has no analytics, ads, remote configuration, or developer-operated backend. Requests go directly to civitai.com over HTTPS. Hub configuration stays in browser-managed extension storage. An optional API key is session-only by default and is persisted only after the user explicitly enables the remember option. It is excluded from exports and application logs.
+
+CODE AND BUILD
+All extension code is plain, readable HTML, CSS, and JavaScript. There is no minification, bundling, transpilation, obfuscation, remote executable code, or runtime package dependency. The release ZIP is built from an explicit allow-list with:
+
+  npm run build:chrome
+  npm run build:firefox
+
+The upload ZIPs have manifest.json at their root. The Firefox package replaces Chrome's service worker declaration with a Firefox MV3 background event-page declaration and includes the required data-collection permission metadata. Desktop Firefox requires version 140 or newer; the separate Android minimum is 142 because that is where Firefox for Android added support for this manifest key.
+
+PRIVACY POLICY
+https://github.com/trunksn1/Civitai-MultiHub/blob/main/PRIVACY.md
+
+PROJECT SOURCE
+https://github.com/trunksn1/Civitai-MultiHub

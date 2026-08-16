@@ -6,11 +6,13 @@ Desktop.ini
 .vscode/
 .idea/
 
-# Packaging and dependencies
+# Packaging artifacts
 *.zip
 *.crx
 *.pem
 dist/
+
+# Node (if a build step is added later)
 node_modules/
 
 # Secrets
@@ -21,8 +23,10 @@ node_modules/
 *.token
 secrets.*
 
-# Private local working material
+# Private release preparation and local working material (never published)
 /private-notes/
+/STORE_PUBLISHING_REVIEW.md
+/ANDROID_FULL_APK_IMPLEMENTATION_PLAN.md
 /*.local.md
 /suggestion.md
 /android/

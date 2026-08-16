@@ -250,6 +250,9 @@ export function manifestForVariant(sourceManifest, variantName) {
           ],
         },
       },
+      gecko_android: {
+        strict_min_version: "142.0",
+      },
     };
   }
   return manifest;
@@ -313,6 +316,9 @@ function validateManifest(manifest, variant) {
     if (!manifest.browser_specific_settings?.gecko?.id) failures.push("Firefox add-on ID is required");
     if (!manifest.browser_specific_settings?.gecko?.data_collection_permissions) {
       failures.push("Firefox data-collection declaration is required");
+    }
+    if (manifest.browser_specific_settings?.gecko_android?.strict_min_version !== "142.0") {
+      failures.push("Firefox Android must require built-in data-consent support");
     }
   } else if (manifest.background?.service_worker !== "background.js") {
     failures.push(`${variant.id} must use the Chrome background service worker`);

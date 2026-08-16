@@ -1,0 +1,56 @@
+NAME
+MultiHub for Civitai - Unofficial
+
+SUMMARY
+Combine selected Civitai creators, models, versions, and public image collections into focused media feeds.
+
+CATEGORY
+Photos, Music & Videos
+
+DESCRIPTION
+Build one focused Civitai media feed from the creators, models, model versions, and public image collections you choose.
+
+Key features:
+• Combine several sources in one continuously loaded feed.
+• Keep separate hubs for different projects or interests.
+• Sort and filter media, group posts, hide viewed items, and hide creators.
+• Add a creator, model, or public image collection directly from its Civitai page.
+• View generation details and comments, then perform explicitly requested Civitai actions.
+• Export and import hubs without exporting API keys or viewed history.
+
+This Firefox Add-ons edition works only on civitai.com and follows its PG/PG-13 browsing range. It does not request access to civitai.red.
+
+Some account-backed features use the Civitai session already open in Firefox. An optional, revocable Civitai API key can be used for reactions and as a fallback for account-backed features. Requests go directly from Firefox to Civitai over HTTPS. MultiHub has no analytics, advertising, or developer-operated application server.
+
+Requested access:
+• Browser storage keeps hubs and preferences locally.
+• civitai.com access adds the MultiHub interface, loads the selected feeds, and performs actions the user requests.
+
+MultiHub is an independent, unofficial project and is not affiliated with or endorsed by Civitai.
+
+HOMEPAGE
+https://github.com/trunksn1/Civitai-MultiHub
+
+SUPPORT WEBSITE
+https://github.com/trunksn1/Civitai-MultiHub/issues
+
+PRIVACY POLICY
+https://github.com/trunksn1/Civitai-MultiHub/blob/main/PRIVACY.md
+
+LICENSE
+MIT License
+
+PLATFORMS
+Firefox desktop: Windows, macOS, Linux. Not Firefox for Android.
+
+EXPERIMENTAL
+Yes. The project currently identifies itself as an active developer preview.
+
+PAYMENT
+No payment, paid service, or additional hardware is required.
+
+DATA COLLECTION PERMISSIONS
+Required: authenticationInfo, personalCommunications, websiteActivity, websiteContent.
+
+SUPPORT EMAIL
+Required before submission; do not publish an address without the account owner's confirmation.

@@ -1,75 +1,44 @@
 # MultiHub feature guide
 
-## Hubs and sources
+The complete, current feature guide is maintained in the main [README](../README.md#main-features).
+This page is a compact overview.
 
-A hub is an independent feed configuration. It has its own sources, sorting, filters, display
-preferences, viewed history, and last-visit state. Sources can be copied or moved between hubs.
+## Personal hubs
 
-Supported source types:
+Each hub has its own creators, models, LoRAs, selected model versions, public image collections,
+filters, sort order, viewed history, and last-visit state. Hubs can be renamed, exported, imported,
+copied, moved, selected as defaults, or managed in bulk.
 
-- Civitai creator username or creator URL.
-- Model or LoRA ID/URL, optionally limited to selected versions.
-- Public image-collection ID/URL.
+## Combined feeds
 
-When the extension is open on a Civitai creator, model, or collection page, the injected MultiHub
-control can add that page directly to a selected hub.
+MultiHub opens one or more streams for each enabled source, merges them into one feed, and
+deduplicates media by Civitai image ID. Available orders include newest, oldest, reactions, and
+comments, with time, media, shape, prompt, resource, metadata, creator, and viewed-state filters.
 
-## Feed behavior
+## Civitai integration
 
-Every source is fetched independently, then the media are merged and deduplicated by Civitai image
-ID. A single card records every source that matched it. The merged feed supports newest, oldest,
-reaction, and comment ordering; time-period, media-type, creator, viewed-state, and browsing-level
-filters; post grouping; and multiple density modes.
+Creators, models, versions, and public image collections can be added directly from their Civitai
+pages. MultiHub runs as an embedded panel below Civitai's header or in its own extension tab.
 
-Refreshes and hub changes cancel obsolete work. Temporary network and upstream errors are shown per
-source so one failed source does not erase successful results from the other sources.
+## Returning-user features
 
-## Image preview and account actions
+NEW markers identify unseen media added since the previous visit. Viewed filters, source controls,
+aliases, post grouping, creator hiding, density settings, and independent hub state make recurring
+feeds manageable.
 
-Opening an image can show generation metadata, model resources, comments, replies, author details,
-and links back to Civitai. The following actions are available when Civitai grants the corresponding
-permission:
+## Image context and account actions
 
-- React to an image.
-- Add an image to a writable collection.
-- Post a comment.
-- Reply inside a comment thread.
+The image viewer can show prompts, generation data, resources, creator and checkpoint attribution,
+comments, replies, reactions, and supported Civitai actions. Account-backed reads and writes use
+the signed-in Civitai session when available; optional scoped API keys remain a fallback. Every
+write requires an explicit user action.
 
-Every write requires an explicit click. Mutations are not retried automatically because a lost
-response does not prove that the write failed.
+## Privacy and distribution
 
-## Signed-in Civitai session
+MultiHub has no account, analytics, advertising, telemetry, data broker, or developer-operated
+application server. The Chrome Store build is limited to `civitai.com` and its PG/PG-13 range. The
+complete manual build can also support `civitai.red`; read the [privacy policy](../PRIVACY.md) and
+[security policy](../SECURITY.md) before using that build.
 
-An open Civitai tab can provide session-backed access without exposing its cookie. The content
-script accepts only a fixed operation allowlist and validates IDs, enums, limits, text length, and
-collection fields before sending same-origin requests. The browser attaches the session cookie;
-MultiHub cannot read its value.
-
-The optional API key is used for reactions and as a fallback for supported operations when the
-signed-in tab is unavailable. Hub exports never contain the key.
-
-## Browsing levels and hosts
-
-Civitai's browsing level is a bitmask over PG, PG-13, R, X, and XXX. MultiHub reads the effective
-setting from the host being browsed and sends that exact selection with feed requests. The setting
-is controlled only by Civitai; MultiHub does not write it.
-
-`civitai.com` serves the narrower range supported by that host. `civitai.red` can serve the full
-configured range, including mature user-generated content. Feed requests, pagination, previews,
-and account actions remain pinned to the host being used.
-
-## Local data and export
-
-Hub configuration and interface state are stored in the local Chrome profile and are not synced to
-the developer. A hub export contains source definitions and feed preferences, but excludes API
-keys, global hidden creators, viewed history, last-visit state, and internal identifiers.
-
-See [PRIVACY.md](../PRIVACY.md) for the complete data flow.
-
-## Current limitations
-
-- Unpacked installations update manually.
-- Optional features that use internal Civitai tRPC procedures may break when Civitai changes them.
-- There is no complete public API for generating a hub automatically from all account follows.
-- Large source sets are constrained by Civitai pagination and rate limits.
-- The browser integration needs real Chrome smoke tests in addition to Node unit tests.
+For exact behavior, limitations, supported source formats, API-key scopes, and release packaging,
+use the [README](../README.md).

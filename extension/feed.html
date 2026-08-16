@@ -21,8 +21,7 @@
       <select id="hub-select"></select>
       <div class="btn-row">
         <button id="hub-new" title="Create a new hub">New</button>
-        <button id="hub-rename" title="Rename this hub">Rename</button>
-        <button id="hub-delete" title="Delete this hub">Delete</button>
+        <button id="hub-manage" title="Create, rename, delete, set a default, import or export hubs">Manage hubs</button>
       </div>
     </section>
 
@@ -33,9 +32,17 @@
                placeholder="username, model/LoRA/collection URL, or model id" required />
         <button type="submit">Add</button>
       </form>
-      <p class="hint">Type is detected automatically: model URLs and numeric ids become
-        model/LoRA sources, collection URLs become public collection sources, and anything else a user. Sorting is controlled by
-        “Feed order” below. Tip: on civitai, use the “Add to MultiHub” button.</p>
+      <details class="source-help">
+        <summary>What can I add?</summary>
+        <dl class="source-help-list">
+          <div><dt>Creator</dt><dd>Name, such as <code>Jenescript</code>, or the creator-page URL.</dd></div>
+          <div><dt>Model / LoRA</dt><dd>Page URL, such as <code>civitai.com/models/2563220</code>, or just
+            <code>2563220</code>. This number identifies the whole model.</dd></div>
+          <div><dt>Specific version</dt><dd>A model URL containing <code>modelVersionId=…</code> preselects
+            that exact version. Without it, MultiHub lets you choose the versions.</dd></div>
+          <div><dt>Collection</dt><dd>The URL of a public Civitai image collection.</dd></div>
+        </dl>
+      </details>
     </section>
 
     <section>
@@ -43,15 +50,17 @@
         <span>Sources</span><span id="sources-count"></span><span class="chevron">▸</span>
       </button>
       <div id="sources-panel" hidden>
+        <div class="btn-row">
+          <button id="source-toggle-all" class="secondary">Disable all sources</button>
+        </div>
+        <ul id="source-list"></ul>
         <button id="source-manage" class="secondary">Manage sources</button>
         <div id="source-bulk" class="source-bulk" hidden>
           <div class="btn-row"><button id="bulk-select-all">Select all</button><button id="bulk-deselect-all">Deselect all</button></div>
-          <div class="btn-row"><button id="bulk-enable">Enable selected</button><button id="bulk-disable">Disable selected</button></div>
           <button id="bulk-copy">Copy selected to another hub</button>
           <button id="bulk-move">Move selected to another hub</button>
           <button id="bulk-remove" class="danger">Remove selected</button>
         </div>
-        <ul id="source-list"></ul>
       </div>
     </section>
 
@@ -65,8 +74,6 @@
           <option value="comments">Most comments</option>
         </select>
       </label>
-      <p class="hint">Reaction and comment order is best-effort because Civitai's API uses
-        a different internal engagement score than the visible raw counts.</p>
       <label>Period
         <select id="period">
           <option>AllTime</option><option>Year</option><option>Month</option>
@@ -150,6 +157,27 @@
       </section>
     </div>
 
+    <div id="hub-manager-overlay" class="settings-overlay" hidden>
+      <section class="settings-dialog hub-manager" role="dialog" aria-modal="true" aria-labelledby="hub-manager-title">
+        <header class="settings-header">
+          <div><h2 id="hub-manager-title">Manage hubs</h2><p>Choose a default hub, rename one, or select several to export or delete.</p></div>
+          <button id="hub-manager-close" class="icon-button" type="button" aria-label="Close hub manager">✕</button>
+        </header>
+        <div class="settings-content">
+          <div id="hub-manager-list" class="hub-manager-list"></div>
+          <p id="hub-manager-status" class="hint" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="dialog-actions hub-manager-actions">
+          <button id="hub-manager-new" type="button" class="secondary">New hub</button>
+          <button id="hub-manager-rename" type="button" class="secondary">Rename</button>
+          <button id="hub-manager-export" type="button" class="secondary">Export selected</button>
+          <button id="hub-manager-import" type="button" class="secondary">Import</button>
+          <button id="hub-manager-delete" type="button" class="danger">Delete selected</button>
+        </footer>
+        <input id="hub-manager-import-file" type="file" accept=".json,application/json" hidden />
+      </section>
+    </div>
+
     <section>
       <h2>Share</h2>
       <button id="export">Export this hub</button>
@@ -226,19 +254,28 @@
   <div id="source-editor-overlay" class="settings-overlay" hidden>
     <form id="source-editor" class="settings-dialog source-editor" role="dialog" aria-modal="true" aria-labelledby="source-editor-title">
       <header class="settings-header">
-        <div><h2 id="source-editor-title">Edit source</h2><p id="source-editor-original"></p></div>
+        <div><h2 id="source-editor-title">Source options</h2><p id="source-editor-original"></p></div>
         <button id="source-editor-close" type="button" class="icon-button" aria-label="Close source editor">✕</button>
       </header>
       <div class="settings-content">
-        <label>Local display name<input id="source-editor-alias" type="text" maxlength="80" placeholder="Use original name" /></label>
+        <label>Choose an alias<input id="source-editor-alias" type="text" maxlength="80" placeholder="Leave empty to use the original name" /></label>
         <div id="source-editor-versions" hidden>
           <label>Versions<select id="source-editor-version-mode"><option value="all">All versions</option><option value="selected">Selected versions</option></select></label>
           <div id="source-editor-version-list" class="version-list"></div>
         </div>
-        <label>After saving
-          <select id="source-editor-transfer"><option value="none">Keep in this hub</option><option value="copy">Also copy to another hub</option><option value="move">Move to another hub</option></select>
-        </label>
-        <label id="source-editor-destination-label" hidden>Destination hub<select id="source-editor-destination"></select></label>
+        <div class="source-transfer-actions">
+          <button id="source-editor-copy" type="button">Copy to another hub</button>
+          <button id="source-editor-move" type="button">Move to another hub</button>
+        </div>
+        <section id="source-transfer-panel" class="source-transfer-panel" hidden>
+          <h3 id="source-transfer-title">Choose a destination hub</h3>
+          <div id="source-transfer-destinations" class="source-transfer-destinations"></div>
+          <button id="source-transfer-create-toggle" type="button" class="secondary">Create a new hub</button>
+          <div id="source-transfer-create" class="source-transfer-create" hidden>
+            <input id="source-transfer-new-name" type="text" maxlength="30" placeholder="New hub name" aria-label="New hub name" />
+            <button id="source-transfer-create-confirm" type="button">Create and continue</button>
+          </div>
+        </section>
         <p id="source-editor-error" class="form-error" hidden></p>
       </div>
       <footer class="dialog-actions"><button id="source-editor-cancel" type="button" class="secondary">Cancel</button><button type="submit">Save changes</button></footer>
@@ -247,8 +284,9 @@
 
   <div id="collection-picker-overlay" class="settings-overlay" hidden>
     <section class="settings-dialog collection-picker" role="dialog" aria-modal="true" aria-labelledby="collection-picker-title">
-      <header class="settings-header"><div><h2 id="collection-picker-title">Add to collection</h2><p>Select a writable Civitai collection</p></div><button id="collection-picker-close" class="icon-button" type="button" aria-label="Close collection picker">✕</button></header>
+      <header class="settings-header"><div><h2 id="collection-picker-title">Add to image collection</h2><p>Select one or more of your Civitai collections.</p></div><button id="collection-picker-close" class="icon-button" type="button" aria-label="Close collection picker">✕</button></header>
       <div class="settings-content"><p id="collection-picker-status" class="hint"></p><div id="collection-picker-list"></div></div>
+      <footer class="dialog-actions"><button id="collection-picker-save" type="button">Save</button></footer>
     </section>
   </div>
 

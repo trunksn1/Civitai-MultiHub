@@ -10,10 +10,18 @@ import {
 
 let openFeedPromise = null;
 
+async function selectDefaultFeed() {
+  const config = await loadConfig();
+  if (!config.defaultFeedId || config.activeFeedId === config.defaultFeedId) return;
+  if (!config.feeds.some((feed) => feed.id === config.defaultFeedId)) return;
+  config.activeFeedId = config.defaultFeedId;
+  await saveConfig(config);
+}
+
 function openFeed() {
   if (openFeedPromise) return openFeedPromise;
   const url = chrome.runtime.getURL("feed.html");
-  openFeedPromise = new Promise((resolve) => {
+  openFeedPromise = selectDefaultFeed().catch(() => {}).then(() => new Promise((resolve) => {
     chrome.tabs.query({ url }, (tabs) => {
       if (tabs.length > 0) {
         chrome.tabs.update(tabs[0].id, { active: true }, () => {
@@ -21,7 +29,7 @@ function openFeed() {
         });
       } else chrome.tabs.create({ url }, resolve);
     });
-  }).finally(() => {
+  })).finally(() => {
     openFeedPromise = null;
   });
   return openFeedPromise;
@@ -109,6 +117,7 @@ async function routeAccountRequest(message, sender) {
         limit: message.limit,
         content: message.content,
         collection: message.collection,
+        collections: message.collections,
         collectionId: message.collectionId,
         collectionInput: message.collectionInput,
       });

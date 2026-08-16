@@ -52,7 +52,7 @@ const LIMITS = {
   feeds: 50,
   sources: 200,
   versions: 100,
-  name: 80,
+  name: 30,
   username: 80,
   label: 160,
   alias: 80,
@@ -73,6 +73,15 @@ const DENSITIES = new Set(["comfortable", "compact"]);
 
 function boundedText(value, max, fallback = "") {
   return typeof value === "string" ? value.trim().slice(0, max) || fallback : fallback;
+}
+
+function sanitizedHubName(value) {
+  if (typeof value !== "string") return "";
+  return value.normalize("NFKC")
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function positiveInteger(value) {
@@ -116,6 +125,14 @@ export function normalizeSource(source, { strict = false } = {}) {
       }
       if (versionIds.length > LIMITS.versions) return fail("Too many model versions");
       if (versionIds.length > 0) normalized.versionIds = versionIds;
+      if (versionIds.length > 0 && source.versionNames && typeof source.versionNames === "object") {
+        const versionNames = {};
+        for (const versionId of versionIds) {
+          const name = boundedText(source.versionNames[versionId], LIMITS.label);
+          if (name) versionNames[versionId] = name;
+        }
+        if (Object.keys(versionNames).length > 0) normalized.versionNames = versionNames;
+      }
     }
     return normalized;
   }
@@ -141,7 +158,8 @@ export function normalizeFeed(value, { strict = false } = {}) {
   if (strict && !Array.isArray(value.sources)) throw new Error("Feed sources must be an array");
   const inputSources = Array.isArray(value.sources) ? value.sources : [];
   if (inputSources.length > LIMITS.sources) throw new Error(`A hub can contain at most ${LIMITS.sources} sources`);
-  if (strict && (typeof value.name !== "string" || !value.name.trim() || value.name.trim().length > LIMITS.name)) {
+  const cleanName = sanitizedHubName(value.name);
+  if (strict && !cleanName) {
     throw new Error(`Hub name must be between 1 and ${LIMITS.name} characters`);
   }
   if (strict && !SORTS.has(value.globalSort)) throw new Error("Invalid hub sort");
@@ -152,7 +170,7 @@ export function normalizeFeed(value, { strict = false } = {}) {
   }
   const feed = {
     id: usableId(value.id),
-    name: boundedText(value.name, LIMITS.name, DEFAULT_FEED.name),
+    name: cleanName.slice(0, LIMITS.name) || DEFAULT_FEED.name,
     globalSort: SORTS.has(value.globalSort) ? value.globalSort : DEFAULT_FEED.globalSort,
     period: PERIODS.has(value.period) ? value.period : DEFAULT_FEED.period,
     mediaType: MEDIA_TYPES.has(value.mediaType) ? value.mediaType : DEFAULT_FEED.mediaType,
@@ -218,7 +236,9 @@ export function normalizeConfig(value = {}) {
   if (feeds.length === 0) feeds.push(makeFeed(DEFAULT_FEED.name));
   const activeFeedId = feeds.some((feed) => feed.id === value.activeFeedId)
     ? value.activeFeedId : feeds[0].id;
-  return { settings, feeds, activeFeedId };
+  const defaultFeedId = feeds.some((feed) => feed.id === value.defaultFeedId)
+    ? value.defaultFeedId : null;
+  return { settings, feeds, activeFeedId, defaultFeedId };
 }
 
 export function newId() {
@@ -226,10 +246,11 @@ export function newId() {
 }
 
 export function normalizeNewHubName(value) {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > LIMITS.name) {
+  const name = sanitizedHubName(value);
+  if (!name || name.length > LIMITS.name) {
     throw new Error(`Hub name must be between 1 and ${LIMITS.name} characters`);
   }
-  return value.trim();
+  return name;
 }
 
 export function makeFeed(name) {
@@ -237,7 +258,9 @@ export function makeFeed(name) {
 }
 
 export async function loadConfig() {
-  const stored = await chrome.storage.local.get(["settings", "feeds", "activeFeedId", "feed", API_KEY_LOCAL]);
+  const stored = await chrome.storage.local.get([
+    "settings", "feeds", "activeFeedId", "defaultFeedId", "feed", API_KEY_LOCAL,
+  ]);
   const session = await chrome.storage.session.get(API_KEY_SESSION);
   const legacyApiKey = boundedText(stored.settings?.apiKey, 500);
   const localApiKey = boundedText(stored[API_KEY_LOCAL] || legacyApiKey, 500);
@@ -259,7 +282,12 @@ export async function loadConfig() {
     // Migrate the pre-hubs single feed, or start with one empty hub.
     feeds = [{ ...DEFAULT_FEED, ...(stored.feed || {}), id: newId() }];
   }
-  const config = normalizeConfig({ settings: stored.settings, feeds, activeFeedId: stored.activeFeedId });
+  const config = normalizeConfig({
+    settings: stored.settings,
+    feeds,
+    activeFeedId: stored.activeFeedId,
+    defaultFeedId: stored.defaultFeedId,
+  });
   config.settings.apiKey = apiKey;
   config.settings.rememberApiKey = Boolean(localApiKey || config.settings.rememberApiKey);
   return config;
@@ -268,7 +296,12 @@ export async function loadConfig() {
 export function persistentConfig(config) {
   const settings = { ...(config.settings || {}) };
   delete settings.apiKey;
-  return { settings, feeds: config.feeds, activeFeedId: config.activeFeedId };
+  return {
+    settings,
+    feeds: config.feeds,
+    activeFeedId: config.activeFeedId,
+    defaultFeedId: config.defaultFeedId || null,
+  };
 }
 
 export async function saveConfig(config) {
@@ -357,38 +390,80 @@ export function mergeSourceIntoFeed(feed, draft) {
   if (!existing.versionIds?.length) return { status: "duplicate" }; // already follows all versions
   if (!draft.versionIds?.length) {
     delete existing.versionIds; // upgrade to all versions
+    delete existing.versionNames;
     if (draft.label) existing.label = draft.label;
     return { status: "merged", source: existing };
   }
   const fresh = draft.versionIds.filter((v) => !existing.versionIds.includes(v));
-  if (fresh.length === 0) return { status: "duplicate" };
+  if (fresh.length === 0) return { status: "duplicate", source: existing };
   existing.versionIds.push(...fresh);
+  if (draft.versionNames) existing.versionNames = { ...existing.versionNames, ...draft.versionNames };
   return { status: "merged", source: existing };
 }
 
-export function exportFeed(feed) {
+function exportableFeed(feed) {
   const { id, viewedIds, lastVisitedAt, ...rest } = feed;
   rest.sources = feed.sources.map(({ id: sourceId, ...source }) => source);
-  const blob = new Blob([JSON.stringify({ format: "CMH1", feed: rest }, null, 2)], {
+  return rest;
+}
+
+function downloadExport(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
   });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${feed.name.replace(/[^\w-]+/g, "_") || "feed"}.multihub.json`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
 }
 
-export function importFeed(json) {
+export function exportFeeds(feeds) {
+  if (!Array.isArray(feeds) || feeds.length === 0) {
+    throw new Error("Select at least one hub to export");
+  }
+  if (feeds.length === 1) {
+    const [feed] = feeds;
+    downloadExport(
+      { format: "CMH1", feed: exportableFeed(feed) },
+      `${feed.name.replace(/[^\w-]+/g, "_") || "feed"}.multihub.json`,
+    );
+    return;
+  }
+  downloadExport(
+    { format: "CMH2", feeds: feeds.map(exportableFeed) },
+    `multihub-${feeds.length}-hubs.multihub.json`,
+  );
+}
+
+export function exportFeed(feed) {
+  exportFeeds([feed]);
+}
+
+function importedFeed(value) {
+  const imported = {
+    ...value,
+    id: newId(),
+    sources: value.sources.map(({ id, ...source }) => source),
+  };
+  return normalizeFeed(imported, { strict: true });
+}
+
+export function importFeeds(json) {
   const data = JSON.parse(json);
-  if (data.format !== "CMH1" || !data.feed || !Array.isArray(data.feed.sources)) {
+  if (data.format === "CMH1" && data.feed && Array.isArray(data.feed.sources)) {
+    return [importedFeed(data.feed)];
+  }
+  if (data.format !== "CMH2" || !Array.isArray(data.feeds)
+      || data.feeds.length === 0 || data.feeds.length > LIMITS.feeds
+      || data.feeds.some((feed) => !feed || !Array.isArray(feed.sources))) {
     throw new Error("Not a valid MultiHub feed file");
   }
-  const imported = {
-    ...data.feed,
-    id: newId(),
-    sources: data.feed.sources.map(({ id, ...source }) => source),
-  };
-  const feed = normalizeFeed(imported, { strict: true });
-  return feed;
+  return data.feeds.map(importedFeed);
+}
+
+export function importFeed(json) {
+  const feeds = importFeeds(json);
+  if (feeds.length !== 1) throw new Error("This file contains multiple hubs");
+  return feeds[0];
 }

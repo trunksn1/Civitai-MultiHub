@@ -1,0 +1,70 @@
+NAME
+MultiHub for Civitai - Unofficial
+
+SUMMARY
+Build custom Civitai feeds from the creators, models, LoRAs, and collections you care about.
+
+CATEGORY
+Art & Design
+
+DETAILED DESCRIPTION
+Civitai is great for discovery. MultiHub is for the creators and resources you already know you do not want to miss.
+
+Choose the creators, models, LoRAs, model versions, and public image collections you care about. MultiHub combines their media into focused personal feeds called hubs, so you can stop checking the same Civitai pages one by one.
+
+WHAT YOU CAN DO
+• Combine several Civitai sources in one continuously loaded, deduplicated feed.
+• Create separate hubs for different interests, projects, or moods.
+• See NEW markers and filter out media you already viewed.
+• Sort and filter the combined feed by time, media, shape, prompt, resources, and metadata.
+• Add creators, models, and public image collections while browsing Civitai.
+• Open prompts, resources, generation information, comments, and supported Civitai actions without losing your place.
+• Export and import hubs without including API keys or viewed history.
+
+GET STARTED
+1. Install MultiHub and refresh an open civitai.com tab.
+2. Open MultiHub and add creators, models, LoRAs, versions, or public image collections to a hub.
+3. Return later and use NEW or viewed filters to see what changed.
+
+PRIVATE BY DESIGN
+MultiHub requires no separate account and has no analytics, advertising, data broker, or developer-operated application server. Hubs and preferences remain in browser extension storage. Feature requests go directly from the browser to Civitai over HTTPS.
+
+Core creator and model feeds need no API key. Some optional account-backed features use the Civitai session already open in the browser. An optional, revocable Civitai API key can be used for reactions and as a fallback for supported account-backed features.
+
+The Chrome Web Store edition works only on civitai.com and follows that site's PG/PG-13 browsing range. It does not request access to civitai.red.
+
+Permissions:
+• Storage — saves hubs, preferences, viewed-item state, hidden creators, and an optional API key when the user explicitly chooses to remember it.
+• civitai.com — adds the MultiHub interface to Civitai pages and accesses Civitai data needed to build feeds and perform user-requested actions.
+
+MultiHub is an independent, unofficial project and is not affiliated with or endorsed by Civitai.
+
+WEBSITE
+https://github.com/trunksn1/Civitai-MultiHub
+
+SUPPORT URL
+https://github.com/trunksn1/Civitai-MultiHub/issues
+
+PRIVACY POLICY
+https://github.com/trunksn1/Civitai-MultiHub/blob/main/PRIVACY.md
+
+SINGLE PURPOSE
+Build and browse user-configured combined media feeds from selected Civitai creators, models, model versions, and public image collections.
+
+PERMISSION JUSTIFICATION: STORAGE
+Stores the user's hubs, sources, aliases, feed preferences, viewed-item state, hidden creators, and optional Civitai API key. The key is session-only by default and is stored locally only after the user enables “Remember this API key on this device.”
+
+PERMISSION JUSTIFICATION: HOST ACCESS
+Access to https://civitai.com/* is required to add the MultiHub interface to Civitai pages, read the page context when the user adds a source, request Civitai feed and image data, and perform Civitai actions the user explicitly requests. The extension does not run on unrelated sites.
+
+REMOTE CODE
+No. All executable HTML, CSS, and JavaScript is packaged with the extension. Civitai responses provide data and media, not executable extension code.
+
+DATA TYPES TO DISCLOSE
+Authentication information; personal communications; user activity; website content.
+
+LIMITED USE CERTIFICATIONS
+Data is used only to provide the extension's single purpose and user-facing features. It is not sold, used for advertising, used for credit decisions, or transferred for unrelated purposes. The developer does not allow humans to read the data.
+
+DISTRIBUTION
+Public, all regions, no payment, not marked Mature. Store package is limited to civitai.com (PG/PG-13).

@@ -3,7 +3,7 @@ import {
   clearModelCache, resolveModelVersion, resolveCreatorProfile, resolveCollection,
   resolveImageGenerationData, resolveImageComments,
   toggleImageReaction,
-  resolveWritableCollections, addImageToCollection,
+  resolveWritableCollections, addImageToCollections,
   postComment,
   explainCivitaiError, resetCivitaiCapabilities,
   resolveAccountBrowsingLevels, maskFromLevels, userAvatarUrl, imageBuzzAmount,
@@ -13,7 +13,8 @@ import { beginOptimisticReaction } from "./action-state.js";
 import { getComparator, hasFrontier } from "./merge.js";
 import {
   loadConfig, saveConfig, activeFeed, makeFeed,
-  parseSourceInput, mergeSourceIntoFeed, exportFeed, importFeed,
+  parseSourceInput, mergeSourceIntoFeed, exportFeed, exportFeeds, importFeeds,
+  normalizeNewHubName,
   MAX_HUBS,
 } from "./storage.js";
 import {
@@ -56,9 +57,11 @@ let loadingRunId = null;
 let runController = null;
 let sourceLinks = {}; // source label -> site path, for the links under each card
 let sourceKinds = {}; // source label -> user | model | collection
+let sourceModelTypes = {}; // model source label -> Checkpoint | LORA | TextualInversion | ...
 let runErrors = []; // failed sources/streams for the current run, always shown
 let selectedSourceIds = new Set();
 let sourceManageMode = false;
+let selectedHubIds = new Set();
 const visitThresholds = new Map();
 let previousVisitAt = null;
 let viewedIdSet = new Set();
@@ -69,6 +72,7 @@ let versionMetadataActive = 0;
 const creatorProfileQueue = [];
 let creatorProfileActive = 0;
 let collectionPickerItem = null;
+let collectionPickerCollections = [];
 const pendingReactionActions = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -234,8 +238,11 @@ function watchCivitaiBrowsingLevel() {
   window.addEventListener("focus", () => refreshBrowsingLevels());
   // The embedding page announces the panel opening so a level changed while it
   // was collapsed is applied immediately rather than on the next tick.
-  window.addEventListener("message", (event) => {
+  window.addEventListener("message", async (event) => {
     if (event.source !== window.parent || event.data?.type !== "cmh-panel-shown") return;
+    if (config?.defaultFeedId && config.activeFeedId !== config.defaultFeedId) {
+      await switchHub(config.defaultFeedId);
+    }
     refreshBrowsingLevels({ force: true });
   });
   if (!document.hidden) start();
@@ -253,14 +260,30 @@ function effectiveApiSettings() {
 function sourceLabel(source) {
   if (source.alias) return source.alias;
   if (source.type === "user") return `@${source.username}`;
-  if (source.type === "collection") return source.label || `Collection #${source.collectionId}`;
-  return source.label || `Model #${source.modelId}`;
+  if (source.type === "collection") return cleanSourceTypePrefix(source.label) || `#${source.collectionId}`;
+  return cleanSourceTypePrefix(source.label) || `Model #${source.modelId}`;
 }
 
 function originalSourceLabel(source) {
   if (source.type === "user") return `@${source.username}`;
-  if (source.type === "collection") return source.label || `Collection #${source.collectionId}`;
-  return source.label || `Model #${source.modelId}`;
+  if (source.type === "collection") return cleanSourceTypePrefix(source.label) || `#${source.collectionId}`;
+  return cleanSourceTypePrefix(source.label) || `Model #${source.modelId}`;
+}
+
+function cleanSourceTypePrefix(value) {
+  return String(value || "").replace(
+    /^(?:collection|checkpoint|lora|embedding|textual\s*inversion|model)\s*:\s*/i, ""
+  ).trim();
+}
+
+function cardSourceLabel(value) {
+  return cleanSourceTypePrefix(value) || String(value || "").trim();
+}
+
+function isCheckpointSource(label) {
+  const type = String(sourceModelTypes[label] || "").toLocaleLowerCase();
+  return type.includes("checkpoint")
+    || (!type && /^checkpoint\s*:/i.test(String(label || "")));
 }
 
 function sourceGroup(source) {
@@ -453,7 +476,7 @@ function renderSourceHubChoices(draft, label, options, target) {
   createForm.hidden = true;
   const createInput = document.createElement("input");
   createInput.type = "text";
-  createInput.maxLength = 80;
+  createInput.maxLength = 30;
   createInput.required = true;
   createInput.placeholder = "New hub name";
   createInput.addEventListener("input", () => createInput.setCustomValidity(""));
@@ -586,16 +609,85 @@ function renderHubs() {
   for (const f of config.feeds) {
     const opt = document.createElement("option");
     opt.value = f.id;
-    opt.textContent = `${f.name} (${f.sources.length})`;
+    opt.textContent = `${f.id === config.defaultFeedId ? "★ " : ""}${f.name}`;
     select.append(opt);
   }
   select.value = config.activeFeedId;
+}
+
+function updateHubManagerActions() {
+  const count = selectedHubIds.size;
+  $("hub-manager-rename").disabled = count !== 1;
+  $("hub-manager-export").disabled = count === 0;
+  $("hub-manager-delete").disabled = count === 0;
+}
+
+function renderHubManager() {
+  const list = $("hub-manager-list");
+  list.replaceChildren();
+  for (const hub of sortedHubs()) {
+    const row = document.createElement("div");
+    row.className = "hub-manager-row";
+    const selected = document.createElement("input");
+    selected.type = "checkbox";
+    selected.checked = selectedHubIds.has(hub.id);
+    selected.setAttribute("aria-label", `Select ${hub.name}`);
+    selected.addEventListener("change", () => {
+      if (selected.checked) selectedHubIds.add(hub.id);
+      else selectedHubIds.delete(hub.id);
+      updateHubManagerActions();
+    });
+    const favorite = document.createElement("button");
+    favorite.type = "button";
+    favorite.className = "hub-manager-default";
+    favorite.classList.toggle("active", hub.id === config.defaultFeedId);
+    favorite.textContent = "★";
+    favorite.title = hub.id === config.defaultFeedId
+      ? "Clear the default hub" : `Open ${hub.name} by default`;
+    favorite.setAttribute("aria-pressed", String(hub.id === config.defaultFeedId));
+    favorite.addEventListener("click", async (event) => {
+      event.preventDefault();
+      config.defaultFeedId = hub.id === config.defaultFeedId ? null : hub.id;
+      await saveConfig(config);
+      renderHubs();
+      renderHubManager();
+      $("hub-manager-status").textContent = config.defaultFeedId
+        ? `“${hub.name}” will open by default.` : "No default hub is set.";
+    });
+    const name = document.createElement("span");
+    name.className = "hub-manager-name";
+    name.textContent = hub.name;
+    const meta = document.createElement("span");
+    meta.className = "hub-manager-meta";
+    meta.textContent = `${hub.sources.length} source${hub.sources.length === 1 ? "" : "s"}${
+      hub.id === config.activeFeedId ? " · current" : ""
+    }`;
+    row.append(selected, favorite, name, meta);
+    list.append(row);
+  }
+  updateHubManagerActions();
+}
+
+function openHubManager() {
+  selectedHubIds = new Set();
+  $("hub-manager-status").textContent = config.defaultFeedId
+    ? "The starred hub opens whenever MultiHub is opened." : "Star a hub to make it the default.";
+  renderHubManager();
+  $("hub-manager-overlay").hidden = false;
+}
+
+function closeHubManager() {
+  $("hub-manager-overlay").hidden = true;
+  selectedHubIds = new Set();
 }
 
 function renderSources() {
   const list = $("source-list");
   list.textContent = "";
   $("sources-count").textContent = `(${feed().sources.length})`;
+  const anyEnabled = feed().sources.some((source) => source.enabled !== false);
+  $("source-toggle-all").textContent = anyEnabled ? "Disable all sources" : "Enable all sources";
+  $("source-toggle-all").disabled = feed().sources.length === 0;
   const order = ["Users", "Collections", "Checkpoints", "LoRAs", "Embeddings", "Models"];
   const sources = [...feed().sources].sort((a, b) => {
     const groupOrder = order.indexOf(sourceGroup(a)) - order.indexOf(sourceGroup(b));
@@ -651,17 +743,16 @@ function renderSources() {
 
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = source.type === "user"
-      ? "user"
-      : source.type === "collection"
-        ? "public image collection"
-        : source.versionIds?.length
-          ? `${source.versionIds.length} version${source.versionIds.length > 1 ? "s" : ""}`
-          : "all versions";
+    const onlyVersionId = source.versionIds?.length === 1 ? source.versionIds[0] : null;
+    const onlyVersionName = onlyVersionId ? source.versionNames?.[onlyVersionId] : "";
+    meta.textContent = onlyVersionName || (source.versionIds?.length
+      ? `${source.versionIds.length} version${source.versionIds.length === 1 ? "" : "s"}`
+      : "all versions");
+    meta.title = onlyVersionName || meta.textContent;
 
     const edit = document.createElement("button");
     edit.className = "edit";
-    edit.textContent = "Edit";
+    edit.textContent = "Options";
     edit.title = source.type === "model"
       ? "Alias, model versions, move or copy"
       : "Alias, move or copy";
@@ -679,7 +770,8 @@ function renderSources() {
       startFeed();
     });
 
-    text.append(label, meta);
+    text.append(label);
+    if (source.type === "model") text.append(meta);
     li.append(selected, enabled, text, edit, remove);
     list.append(li);
   }
@@ -690,7 +782,7 @@ function renderSources() {
 
 function updateBulkControls() {
   const hasSelection = selectedSourceIds.size > 0;
-  for (const id of ["bulk-enable", "bulk-disable", "bulk-copy", "bulk-move", "bulk-remove", "bulk-deselect-all"]) {
+  for (const id of ["bulk-copy", "bulk-move", "bulk-remove", "bulk-deselect-all"]) {
     $(id).disabled = !hasSelection;
   }
   $("bulk-select-all").disabled = feed().sources.length === 0
@@ -717,22 +809,99 @@ function copySourceTo(source, destination) {
 }
 
 let editingSourceId = null;
+let sourceTransferMode = null;
+
+function showSourceEditorError(message = "") {
+  $("source-editor-error").textContent = message;
+  $("source-editor-error").hidden = !message;
+}
+
+function sourceEditorDraft() {
+  const source = feed().sources.find((candidate) => candidate.id === editingSourceId);
+  if (!source) return null;
+  const updated = { ...source };
+  delete updated.nsfw;
+  const alias = $("source-editor-alias").value.trim().slice(0, 80);
+  if (alias) updated.alias = alias;
+  else delete updated.alias;
+  if (source.type === "model") {
+    if ($("source-editor-version-mode").value === "all") delete updated.versionIds;
+    else {
+      const versionIds = [...$("source-editor-version-list").querySelectorAll("input:checked")]
+        .map((input) => Number(input.value));
+      if (versionIds.length === 0) {
+        showSourceEditorError("Select at least one version, or choose All versions.");
+        return null;
+      }
+      updated.versionIds = versionIds;
+      updated.versionNames = Object.fromEntries(versionIds.map((versionId) => [
+        versionId,
+        source._availableVersionNames?.[versionId] || source.versionNames?.[versionId] || `Version ${versionId}`,
+      ]));
+    }
+    if (!updated.versionIds) delete updated.versionNames;
+    delete updated._availableVersionNames;
+  }
+  showSourceEditorError();
+  return { source, updated };
+}
+
+function renderSourceTransferDestinations() {
+  const list = $("source-transfer-destinations");
+  list.replaceChildren();
+  const destinations = sortedHubs().filter((hub) => hub.id !== feed().id);
+  if (destinations.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "There are no other hubs yet. Create one below.";
+    list.append(empty);
+    return;
+  }
+  for (const hub of destinations) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = hub.name;
+    button.addEventListener("click", () => transferEditedSource(hub));
+    list.append(button);
+  }
+}
+
+function openSourceTransfer(mode) {
+  sourceTransferMode = mode;
+  $("source-transfer-title").textContent = `${mode === "move" ? "Move" : "Copy"} to which hub?`;
+  $("source-transfer-panel").hidden = false;
+  $("source-transfer-create").hidden = true;
+  $("source-transfer-new-name").value = "";
+  renderSourceTransferDestinations();
+}
+
+async function transferEditedSource(destination) {
+  const draft = sourceEditorDraft();
+  if (!draft || !sourceTransferMode) return false;
+  copySourceTo(draft.updated, destination);
+  if (sourceTransferMode === "move") {
+    feed().sources = feed().sources.filter((candidate) => candidate.id !== draft.source.id);
+  }
+  await saveConfig(config);
+  const action = sourceTransferMode === "move" ? "Moved" : "Copied";
+  setStatus(`${action} ${sourceLabel(draft.updated)} to “${destination.name}”.`);
+  selectedSourceIds.delete(draft.source.id);
+  closeSourceEditor();
+  renderHubs();
+  renderSources();
+  startFeed();
+  return true;
+}
 
 async function editSource(source) {
   editingSourceId = source.id;
-  $("source-editor-title").textContent = `Edit ${sourceLabel(source)}`;
+  sourceTransferMode = null;
+  $("source-editor-title").textContent = `Options for ${sourceLabel(source)}`;
   $("source-editor-original").textContent = `Original: ${originalSourceLabel(source)}`;
   $("source-editor-alias").value = source.alias || "";
-  $("source-editor-error").hidden = true;
-  const destinations = config.feeds.filter((hub) => hub.id !== feed().id);
-  $("source-editor-destination").replaceChildren(...destinations.map((hub) => {
-    const option = document.createElement("option");
-    option.value = hub.id;
-    option.textContent = hub.name;
-    return option;
-  }));
-  $("source-editor-transfer").value = "none";
-  $("source-editor-destination-label").hidden = true;
+  showSourceEditorError();
+  $("source-transfer-panel").hidden = true;
+  $("source-transfer-create").hidden = true;
   $("source-editor-versions").hidden = source.type !== "model";
   $("source-editor-version-list").textContent = "";
   if (source.type === "model") {
@@ -741,15 +910,19 @@ async function editSource(source) {
       $("source-editor-version-mode").value = source.versionIds?.length ? "selected" : "all";
       $("source-editor-version-list").hidden = !source.versionIds?.length;
       const selected = new Set(source.versionIds || []);
+      const versionNames = {};
       for (const version of model.versions) {
         const label = document.createElement("label");
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.value = version.id;
         checkbox.checked = selected.has(version.id);
+        checkbox.dataset.versionName = version.name;
+        versionNames[version.id] = version.name;
         label.append(checkbox, `${version.name} (${version.id})`);
         $("source-editor-version-list").append(label);
       }
+      source._availableVersionNames = versionNames;
     } catch (error) {
       $("source-editor-error").textContent = `Could not load versions: ${error.message}`;
       $("source-editor-error").hidden = false;
@@ -762,6 +935,7 @@ async function editSource(source) {
 function closeSourceEditor() {
   $("source-editor-overlay").hidden = true;
   editingSourceId = null;
+  sourceTransferMode = null;
 }
 
 // ---------- masonry grid ----------
@@ -847,9 +1021,19 @@ function showSkeletons() {
 }
 
 const CARD_SIGNAL_ICONS = {
-  remix: '<path d="M4 20c3.5 0 5-1.5 5-5l8-8 3 3-8 8c-3.5 0-5 2-8 2Z"/><path d="m15 5 4 4"/>',
-  prompt: '<path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
-  resources: '<circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="m10 10 4 4"/>',
+  remix: [
+    ["path", { d: "M4 20c3.5 0 5-1.5 5-5l8-8 3 3-8 8c-3.5 0-5 2-8 2Z" }],
+    ["path", { d: "m15 5 4 4" }],
+  ],
+  prompt: [
+    ["path", { d: "M5 4h14v16H5z" }],
+    ["path", { d: "M8 8h8M8 12h8M8 16h5" }],
+  ],
+  resources: [
+    ["circle", { cx: "8", cy: "8", r: "3" }],
+    ["circle", { cx: "16", cy: "16", r: "3" }],
+    ["path", { d: "m10 10 4 4" }],
+  ],
 };
 
 function makeCardInfoBadge(kind, label, href = "", shortLabel = label) {
@@ -865,7 +1049,11 @@ function makeCardInfoBadge(kind, label, href = "", shortLabel = label) {
   const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   icon.setAttribute("viewBox", "0 0 24 24");
   icon.setAttribute("aria-hidden", "true");
-  icon.innerHTML = CARD_SIGNAL_ICONS[kind];
+  for (const [tag, attributes] of CARD_SIGNAL_ICONS[kind]) {
+    const part = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [name, value] of Object.entries(attributes)) part.setAttribute(name, value);
+    icon.append(part);
+  }
   const text = document.createElement("span");
   text.textContent = shortLabel;
   badge.append(icon, text);
@@ -951,13 +1139,13 @@ function creatorAvatar(item) {
 }
 
 function createCardModelAttribution(item, modelSources, domain) {
-  const checkpointSource = modelSources.find((label) =>
-    label.toLocaleLowerCase().includes("checkpoint")
-  );
-  const versionIds = checkpointSource
-    ? [] : [...new Set(item.modelVersionIds || [])].slice(0, 10);
-  const labels = checkpointSource
-    ? [checkpointSource] : (versionIds.length ? ["model"] : (item.baseModel ? [item.baseModel] : []));
+  // A checkpoint source is already the card's first fact. Repeating that same
+  // checkpoint after the creator would add no information. Creator sources and
+  // auxiliary sources (LoRA, embedding, collection, Featured) still show the
+  // checkpoint actually used by the image as their other fact.
+  if (modelSources.some(isCheckpointSource)) return null;
+  const versionIds = [...new Set(item.modelVersionIds || [])].slice(0, 10);
+  const labels = versionIds.length ? ["model"] : (item.baseModel ? [item.baseModel] : []);
   if (labels.length === 0) return null;
 
   const container = document.createElement("span");
@@ -967,10 +1155,10 @@ function createCardModelAttribution(item, modelSources, domain) {
     const fallback = versionIds.length === 0 ? BASE_MODEL_LINKS[label] : null;
     const sourcePath = sourceLinks[label] || fallback?.path;
     if (!sourcePath) {
-      container.append(fallback?.label || label);
+      container.append(cardSourceLabel(fallback?.label || label));
       return;
     }
-    const modelLabel = fallback?.label || label;
+    const modelLabel = cardSourceLabel(fallback?.label || label);
     const modelLink = document.createElement("a");
     modelLink.textContent = modelLabel;
     modelLink.href = `https://${domain}${sourcePath}`;
@@ -1155,15 +1343,17 @@ function makeCard(item) {
   displayedSources.forEach((label, i) => {
     if (i > 0) sourcesDiv.append(" + ");
     const a = document.createElement("a");
-    a.textContent = label;
+    const displayLabel = cardSourceLabel(label);
+    a.textContent = displayLabel;
+    a.title = displayLabel;
     const sourcePath = sourceLinks[label] || "/";
     a.href = `https://${domain}${sourcePath}`;
     a.target = "_blank";
     a.rel = "noopener";
     const draft = sourceKinds[label] === "model"
-      ? modelDraftFromPath(sourcePath, label)
-      : sourceKinds[label] === "collection" ? collectionDraftFromPath(sourcePath, label) : null;
-    if (draft) installSourceHoverMenu(a, [{ label, draft }]);
+      ? modelDraftFromPath(sourcePath, displayLabel)
+      : sourceKinds[label] === "collection" ? collectionDraftFromPath(sourcePath, displayLabel) : null;
+    if (draft) installSourceHoverMenu(a, [{ label: displayLabel, draft }]);
     sourcesDiv.append(a);
   });
 
@@ -1313,38 +1503,70 @@ function renderLightboxReactions(item, imageUrl) {
 
 async function openCollectionPicker(item) {
   collectionPickerItem = item;
+  collectionPickerCollections = [];
   $("collection-picker-overlay").hidden = false;
   $("collection-picker-list").textContent = "";
+  $("collection-picker-save").disabled = true;
   // Account actions use the signed-in Civitai tab; an API key is only a fallback.
   $("collection-picker-status").textContent = "Loading collections…";
   try {
-    const collections = await resolveWritableCollections(effectiveApiSettings(), runController?.signal);
-    $("collection-picker-status").textContent = collections.length ? "" : "No writable collections were returned.";
-    for (const collection of collections) {
-      const button = document.createElement("button");
-      button.type = "button"; button.textContent = collection.name;
-      button.addEventListener("click", async () => {
-        button.disabled = true;
-        $("collection-picker-status").textContent = `Adding to ${collection.name}…`;
-        try {
-          await addImageToCollection(collectionPickerItem.id, collection, effectiveApiSettings(), runController?.signal);
-          collectionPickerItem._collected = true;
-          $("collection-picker-status").textContent = `Added to ${collection.name}.`;
-        } catch (error) {
-          $("collection-picker-status").textContent = explainCivitaiError(error, {
-            action: "Adding the image to the collection",
-            scope: "CollectionsWrite access",
-            mutation: true,
-          });
-        }
-        button.disabled = false;
+    collectionPickerCollections = (await resolveWritableCollections(
+      effectiveApiSettings(), runController?.signal
+    )).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+      sensitivity: "base", numeric: true,
+    }));
+    $("collection-picker-status").textContent = collectionPickerCollections.length
+      ? "" : "No owned image collections were returned.";
+    for (const collection of collectionPickerCollections) {
+      const option = document.createElement("label");
+      option.className = "collection-picker-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = String(collection.id);
+      checkbox.addEventListener("change", () => {
+        $("collection-picker-save").disabled = !$("collection-picker-list").querySelector("input:checked");
       });
-      $("collection-picker-list").append(button);
+      const name = document.createElement("span");
+      name.textContent = collection.name;
+      option.append(checkbox, name);
+      $("collection-picker-list").append(option);
     }
   } catch (error) {
     $("collection-picker-status").textContent = explainCivitaiError(error, {
       action: "Collections", scope: "CollectionsRead access",
     });
+  }
+}
+
+async function saveCollectionPicker() {
+  if (!collectionPickerItem) return;
+  const selectedIds = new Set([...$("collection-picker-list").querySelectorAll("input:checked")]
+    .map((input) => Number(input.value)));
+  const selected = collectionPickerCollections.filter((collection) => selectedIds.has(Number(collection.id)));
+  if (selected.length === 0) return;
+  const save = $("collection-picker-save");
+  save.disabled = true;
+  $("collection-picker-status").textContent = `Adding to ${selected.length} collection${selected.length === 1 ? "" : "s"}…`;
+  try {
+    await addImageToCollections(
+      collectionPickerItem.id, selected, effectiveApiSettings(), runController?.signal
+    );
+    const item = collectionPickerItem;
+    item._collected = true;
+    $("collection-picker-overlay").hidden = true;
+    collectionPickerItem = null;
+    collectionPickerCollections = [];
+    const message = `Added to ${selected.length} collection${selected.length === 1 ? "" : "s"}.`;
+    if (!$("lightbox").hidden && Number($("lightbox").dataset.imageId) === Number(item.id)) {
+      $("lightbox-action-status").textContent = message;
+    } else setStatus(message);
+  } catch (error) {
+    $("collection-picker-status").textContent = explainCivitaiError(error, {
+      action: "Adding the image to the selected collections",
+      scope: "CollectionsWrite access",
+      mutation: true,
+    });
+    save.disabled = false;
   }
 }
 
@@ -2141,6 +2363,7 @@ async function startFeed({ clearImmediately = false } = {}) {
   renderedIds = new Set();
   sourceLinks = {};
   sourceKinds = {};
+  sourceModelTypes = {};
   runErrors = [];
   renderErrors();
   clearModelCache();
@@ -2179,6 +2402,7 @@ async function startFeed({ clearImmediately = false } = {}) {
         for (const s of opened) {
           sourceLinks[s.label] = s.href;
           sourceKinds[s.label] = source.type;
+          if (source.type === "model") sourceModelTypes[s.label] = s.modelType || "";
         }
       }
     } catch (err) {
@@ -2300,21 +2524,68 @@ function bindHubs() {
     config.feeds.push(f);
     await switchHub(f.id);
   });
-
-  $("hub-rename").addEventListener("click", async () => {
-    const name = prompt("New name for this hub:", feed().name);
+  $("hub-manage").addEventListener("click", openHubManager);
+  $("hub-manager-close").addEventListener("click", closeHubManager);
+  $("hub-manager-overlay").addEventListener("click", (event) => {
+    if (event.target === $("hub-manager-overlay")) closeHubManager();
+  });
+  $("hub-manager-new").addEventListener("click", async () => {
+    if (config.feeds.length >= MAX_HUBS) {
+      $("hub-manager-status").textContent = `MultiHub supports at most ${MAX_HUBS} hubs.`;
+      return;
+    }
+    const name = prompt("Name for the new hub:", `Hub ${config.feeds.length + 1}`);
     if (!name) return;
-    feed().name = name.trim();
+    const hub = makeFeed(name);
+    config.feeds.push(hub);
+    await switchHub(hub.id);
+    renderHubManager();
+  });
+  $("hub-manager-rename").addEventListener("click", async () => {
+    if (selectedHubIds.size !== 1) return;
+    const hub = config.feeds.find((candidate) => selectedHubIds.has(candidate.id));
+    if (!hub) return;
+    const name = prompt("New name for this hub:", hub.name);
+    if (!name) return;
+    try {
+      hub.name = normalizeNewHubName(name);
+    } catch (error) {
+      $("hub-manager-status").textContent = error.message;
+      return;
+    }
     await saveConfig(config);
     renderHubs();
+    renderHubManager();
   });
-
-  $("hub-delete").addEventListener("click", async () => {
-    const f = feed();
-    if (!confirm(`Delete hub "${f.name}" and its ${f.sources.length} sources?`)) return;
-    config.feeds = config.feeds.filter((x) => x.id !== f.id);
+  $("hub-manager-export").addEventListener("click", () => {
+    const selected = config.feeds.filter((hub) => selectedHubIds.has(hub.id));
+    if (selected.length > 0) exportFeeds(selected);
+  });
+  $("hub-manager-delete").addEventListener("click", async () => {
+    const selected = config.feeds.filter((hub) => selectedHubIds.has(hub.id));
+    if (selected.length === 0) return;
+    if (!confirm(`Delete ${selected.length} selected hub${selected.length === 1 ? "" : "s"} and all of their sources?`)) return;
+    const removedIds = new Set(selected.map((hub) => hub.id));
+    config.feeds = config.feeds.filter((hub) => !removedIds.has(hub.id));
     if (config.feeds.length === 0) config.feeds.push(makeFeed("My hub"));
-    await switchHub(config.feeds[0].id);
+    if (removedIds.has(config.defaultFeedId)) config.defaultFeedId = null;
+    if (!config.feeds.some((hub) => hub.id === config.activeFeedId)) {
+      config.activeFeedId = config.defaultFeedId || config.feeds[0].id;
+    }
+    selectedHubIds = new Set();
+    await saveConfig(config);
+    renderHubs();
+    renderHubManager();
+    renderSources();
+    syncFeedControls();
+    startFeed({ clearImmediately: true });
+  });
+  $("hub-manager-import").addEventListener("click", () => $("hub-manager-import-file").click());
+  $("hub-manager-import-file").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    await importHubsFromFile(file, true);
+    event.target.value = "";
   });
 }
 
@@ -2584,6 +2855,13 @@ function bindBulkSources() {
     if (!sourceManageMode) selectedSourceIds = new Set();
     renderSources();
   });
+  $("source-toggle-all").addEventListener("click", async () => {
+    const enable = !feed().sources.some((source) => source.enabled !== false);
+    for (const source of feed().sources) source.enabled = enable;
+    await saveConfig(config);
+    renderSources();
+    startFeed();
+  });
   $("bulk-select-all").addEventListener("click", () => {
     selectedSourceIds = new Set(feed().sources.map((source) => source.id));
     renderSources();
@@ -2592,17 +2870,6 @@ function bindBulkSources() {
     selectedSourceIds = new Set();
     renderSources();
   });
-  async function setSelectedEnabled(enabled) {
-    if (selectedSourceIds.size === 0) return;
-    for (const source of feed().sources) {
-      if (selectedSourceIds.has(source.id)) source.enabled = enabled;
-    }
-    await saveConfig(config);
-    renderSources();
-    startFeed();
-  }
-  $("bulk-enable").addEventListener("click", () => setSelectedEnabled(true));
-  $("bulk-disable").addEventListener("click", () => setSelectedEnabled(false));
   $("bulk-copy").addEventListener("click", () => transferSelected(false));
   $("bulk-move").addEventListener("click", () => transferSelected(true));
   $("bulk-remove").addEventListener("click", async () => {
@@ -2617,27 +2884,43 @@ function bindBulkSources() {
   });
 }
 
+async function importHubsFromFile(file, keepManagerOpen = false) {
+  try {
+    const imported = importFeeds(await file.text());
+    if (config.feeds.length + imported.length > MAX_HUBS) {
+      throw new Error(`Import would exceed the ${MAX_HUBS}-hub limit`);
+    }
+    config.feeds.push(...imported);
+    await switchHub(imported[imported.length - 1].id);
+    const sourceCount = imported.reduce((total, hub) => total + hub.sources.length, 0);
+    setStatus(`Imported ${imported.length} hub${imported.length === 1 ? "" : "s"} (${sourceCount} sources).`);
+    if (keepManagerOpen) {
+      $("hub-manager-status").textContent = `Imported ${imported.length} hub${imported.length === 1 ? "" : "s"}.`;
+      renderHubManager();
+    }
+  } catch (error) {
+    const message = `Import failed: ${error.message}`;
+    setStatus(message);
+    if (keepManagerOpen) $("hub-manager-status").textContent = message;
+  }
+}
+
 function bindShare() {
   $("export").addEventListener("click", () => exportFeed(feed()));
   $("import").addEventListener("click", () => $("import-file").click());
   $("import-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    try {
-      const imported = importFeed(await file.text());
-      config.feeds.push(imported);
-      await switchHub(imported.id);
-      setStatus(`Imported hub "${imported.name}" (${imported.sources.length} sources).`);
-    } catch (err) {
-      setStatus(`Import failed: ${err.message}`);
-    }
+    await importHubsFromFile(file);
     e.target.value = "";
   });
 }
 
 // Sources can be added from civitai pages while this tab is open; keep in sync.
 chrome.storage.onChanged.addListener((changes, area) => {
-  const relevantLocal = area === "local" && (changes.feeds || changes.settings || changes.activeFeedId || changes.apiKey);
+  const relevantLocal = area === "local" && (
+    changes.feeds || changes.settings || changes.activeFeedId || changes.defaultFeedId || changes.apiKey
+  );
   const relevantSession = area === "session" && changes.apiKey;
   if ((!relevantLocal && !relevantSession) || document.hasFocus()) return;
   reloadFromStorage();
@@ -2648,7 +2931,8 @@ async function reloadFromStorage() {
   if (!config) return;
   const fresh = await loadConfig();
   const feedsChanged = JSON.stringify(fresh.feeds) !== JSON.stringify(config.feeds)
-    || fresh.activeFeedId !== config.activeFeedId;
+    || fresh.activeFeedId !== config.activeFeedId
+    || fresh.defaultFeedId !== config.defaultFeedId;
   const settingsChanged = JSON.stringify(fresh.settings) !== JSON.stringify(config.settings);
   if (!feedsChanged && !settingsChanged) return;
   const requiresRefetch = ["apiKey", "maxVersionsPerModel"]
@@ -2724,8 +3008,10 @@ function bindLightbox() {
   const closePicker = () => {
     $("collection-picker-overlay").hidden = true;
     collectionPickerItem = null;
+    collectionPickerCollections = [];
   };
   $("collection-picker-close").addEventListener("click", closePicker);
+  $("collection-picker-save").addEventListener("click", saveCollectionPicker);
   $("collection-picker-overlay").addEventListener("click", (event) => {
     if (event.target === $("collection-picker-overlay")) closePicker();
   });
@@ -2737,8 +3023,33 @@ function bindSourceEditor() {
   $("source-editor-overlay").addEventListener("click", (event) => {
     if (event.target === $("source-editor-overlay")) closeSourceEditor();
   });
-  $("source-editor-transfer").addEventListener("change", (event) => {
-    $("source-editor-destination-label").hidden = event.target.value === "none";
+  $("source-editor-copy").addEventListener("click", () => openSourceTransfer("copy"));
+  $("source-editor-move").addEventListener("click", () => openSourceTransfer("move"));
+  $("source-transfer-create-toggle").addEventListener("click", () => {
+    $("source-transfer-create").hidden = !$("source-transfer-create").hidden;
+    if (!$("source-transfer-create").hidden) $("source-transfer-new-name").focus();
+  });
+  $("source-transfer-new-name").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    $("source-transfer-create-confirm").click();
+  });
+  $("source-transfer-create-confirm").addEventListener("click", async () => {
+    if (config.feeds.length >= MAX_HUBS) {
+      showSourceEditorError(`MultiHub supports at most ${MAX_HUBS} hubs.`);
+      return;
+    }
+    let destination;
+    try {
+      destination = makeFeed($("source-transfer-new-name").value);
+    } catch (error) {
+      showSourceEditorError(error.message);
+      return;
+    }
+    config.feeds.push(destination);
+    if (!await transferEditedSource(destination)) {
+      config.feeds = config.feeds.filter((hub) => hub.id !== destination.id);
+    }
   });
   $("source-editor-version-mode").addEventListener("change", (event) => {
     $("source-editor-version-list").hidden = event.target.value === "all";
@@ -2748,43 +3059,15 @@ function bindSourceEditor() {
   });
   $("source-editor").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const source = feed().sources.find((candidate) => candidate.id === editingSourceId);
-    if (!source) return closeSourceEditor();
-    const updated = { ...source };
-    delete updated.nsfw; // migrate legacy per-source maximums to unified browsing levels
-    const alias = $("source-editor-alias").value.trim().slice(0, 80);
-    if (alias) updated.alias = alias;
-    else delete updated.alias;
-    if (source.type === "model") {
-      if ($("source-editor-version-mode").value === "all") delete updated.versionIds;
-      else {
-        const versionIds = [...$("source-editor-version-list").querySelectorAll("input:checked")]
-          .map((input) => Number(input.value));
-        if (versionIds.length === 0) {
-          $("source-editor-error").textContent = "Select at least one version, or choose All versions.";
-          $("source-editor-error").hidden = false;
-          return;
-        }
-        updated.versionIds = versionIds;
-      }
-    }
-    const transfer = $("source-editor-transfer").value;
-    const destination = transfer === "none"
-      ? null : config.feeds.find((hub) => hub.id === $("source-editor-destination").value);
-    if (transfer !== "none" && !destination) {
-      $("source-editor-error").textContent = "Choose a destination hub.";
-      $("source-editor-error").hidden = false;
-      return;
-    }
-    if (destination) copySourceTo(updated, destination);
-    if (transfer === "move") feed().sources = feed().sources.filter((candidate) => candidate.id !== source.id);
-    else {
-      delete source.alias;
-      delete source.versionIds;
-      Object.assign(source, updated);
-    }
+    const draft = sourceEditorDraft();
+    if (!draft) return;
+    delete draft.source.alias;
+    delete draft.source.versionIds;
+    delete draft.source.versionNames;
+    delete draft.source._availableVersionNames;
+    Object.assign(draft.source, draft.updated);
     await saveConfig(config);
-    selectedSourceIds.delete(source.id);
+    selectedSourceIds.delete(draft.source.id);
     closeSourceEditor();
     renderHubs();
     renderSources();
@@ -2794,6 +3077,9 @@ function bindSourceEditor() {
 
 (async function init() {
   config = await loadConfig();
+  if (config.defaultFeedId && config.feeds.some((hub) => hub.id === config.defaultFeedId)) {
+    config.activeFeedId = config.defaultFeedId;
+  }
   await saveConfig(config); // persist migration to the multi-hub format
   bindHubs();
   bindPanels();

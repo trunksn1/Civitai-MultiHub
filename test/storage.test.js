@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   importFeed,
+  importFeeds,
   loadConfig,
   makeFeed,
   mergeSourceIntoFeed,
@@ -16,8 +17,14 @@ import {
 test("new hub names are trimmed and bounded before persistence", () => {
   assert.equal(normalizeNewHubName("  Landscapes  "), "Landscapes");
   assert.equal(makeFeed("  Landscapes  ").name, "Landscapes");
-  assert.throws(() => normalizeNewHubName("   "), /between 1 and 80/);
-  assert.throws(() => normalizeNewHubName("x".repeat(81)), /between 1 and 80/);
+  assert.equal(normalizeNewHubName("  <My\u0000   Hub>  "), "My Hub");
+  assert.throws(() => normalizeNewHubName("   "), /between 1 and 30/);
+  assert.throws(() => normalizeNewHubName("x".repeat(31)), /between 1 and 30/);
+  const migrated = normalizeConfig({
+    feeds: [{ id: "old", name: `Old <hub> ${"x".repeat(40)}`, sources: [] }],
+  });
+  assert.equal(migrated.feeds[0].name.length, 30);
+  assert.doesNotMatch(migrated.feeds[0].name, /[<>]/);
 });
 
 test("parseSourceInput recognizes supported forms and rejects malformed input", () => {
@@ -39,12 +46,13 @@ test("mergeSourceIntoFeed canonicalizes users and merges model versions", () => 
   assert.equal(mergeSourceIntoFeed(feed, { type: "user", username: " Alice " }).status, "added");
   assert.equal(mergeSourceIntoFeed(feed, { type: "user", username: "alice" }).status, "duplicate");
   assert.equal(mergeSourceIntoFeed(feed, {
-    type: "model", modelId: 12, versionIds: [1],
+    type: "model", modelId: 12, versionIds: [1], versionNames: { 1: "First version" },
   }).status, "added");
   assert.equal(mergeSourceIntoFeed(feed, {
-    type: "model", modelId: 12, versionIds: [2],
+    type: "model", modelId: 12, versionIds: [2], versionNames: { 2: "Second version" },
   }).status, "merged");
   assert.deepEqual(feed.sources[1].versionIds, [1, 2]);
+  assert.deepEqual(feed.sources[1].versionNames, { 1: "First version", 2: "Second version" });
   assert.equal(mergeSourceIntoFeed(feed, {
     type: "collection", collectionId: 5205910, label: "Collection: Highly creative",
   }).status, "added");
@@ -79,6 +87,17 @@ test("normalizeConfig repairs stored values and deduplicates sources", () => {
   assert.equal(config.feeds[0].generationFilter, "all");
   assert.equal(config.feeds[0].sources.length, 1);
   assert.equal(config.activeFeedId, "hub");
+});
+
+test("default hubs are retained only while they still exist", () => {
+  const config = normalizeConfig({
+    feeds: [{ id: "one", name: "One", sources: [] }, { id: "two", name: "Two", sources: [] }],
+    activeFeedId: "one",
+    defaultFeedId: "two",
+  });
+  assert.equal(config.defaultFeedId, "two");
+  assert.equal(persistentConfig(config).defaultFeedId, "two");
+  assert.equal(normalizeConfig({ feeds: config.feeds, defaultFeedId: "missing" }).defaultFeedId, null);
 });
 
 test("API keys are excluded from normalized hub/settings configuration", () => {
@@ -172,4 +191,26 @@ test("importFeed strictly validates enums, ids, and version lists", () => {
     feed: { ...base, sources: [{ id: "shared-source-id", type: "user", username: "Alice" }] },
   }));
   assert.notEqual(imported.sources[0].id, "shared-source-id");
+});
+
+test("multi-hub imports validate every hub and replace shared ids", () => {
+  const json = JSON.stringify({
+    format: "CMH2",
+    feeds: [
+      { name: "One", globalSort: "newest", period: "AllTime", sources: [] },
+      { name: "Two", globalSort: "oldest", period: "Month", sources: [
+        { id: "shared", type: "model", modelId: 42 },
+      ] },
+    ],
+  });
+  const feeds = importFeeds(json);
+  assert.deepEqual(feeds.map((feed) => feed.name), ["One", "Two"]);
+  assert.notEqual(feeds[1].sources[0].id, "shared");
+  assert.throws(() => importFeed(json), /multiple hubs/);
+  const legacyLongName = importFeed(JSON.stringify({
+    format: "CMH1",
+    feed: { name: `<${"Legacy hub ".repeat(5)}>`, globalSort: "newest", period: "AllTime", sources: [] },
+  }));
+  assert.equal(legacyLongName.name.length, 30);
+  assert.doesNotMatch(legacyLongName.name, /[<>]/);
 });

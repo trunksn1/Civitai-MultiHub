@@ -86,17 +86,47 @@ test("full/manual package preserves the same complete extension files", async ()
 });
 
 test("source UI keeps the corrected hub picker and preview contracts", async () => {
-  const [content, background, feedHtml, feedScript] = await Promise.all([
+  const [content, contentCss, background, feedHtml, feedScript, feedCss] = await Promise.all([
     readFile(new URL("../extension/content.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/content.css", import.meta.url), "utf8"),
     readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/feed.html", import.meta.url), "utf8"),
     readFile(new URL("../extension/feed.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/feed.css", import.meta.url), "utf8"),
   ]);
-  assert.match(content, /Add Featured Image Collection to MultiHub/);
+  assert.match(content, /Add Featured to MultiHub/);
   assert.match(content, /Add this collection to MultiHub/);
   assert.match(content, /Create a new hub/);
   assert.match(content, /Search existing hubs/);
+  assert.match(content, /findModelHeaderActionGroup/);
+  assert.match(content, /findModelSidebarActionRow/);
+  assert.match(content, /versionCount > 1/);
+  assert.match(content, /Only the current version/);
+  assert.match(content, /versionNames: \{ \[source\.versionId\]: source\.versionName \}/);
+  assert.match(content, /Add \$\{source\.modelKind \|\| "Model"\} to MultiHub/);
+  assert.match(content, /document\.documentElement\.append\(menu\)/);
+  assert.match(content, /Loading hubs…/);
+  assert.match(content, /openPageHubMenu/);
+  assert.match(content, /innerWidth - rect\.width - 8/);
+  assert.match(contentCss, /position:\s*fixed;\s*\n\s*z-index:\s*2147483646/);
+  assert.match(contentCss, /\.cmh-model-action-host[\s\S]+height:\s*auto\s*!important/);
   assert.match(background, /create-hub-with-source/);
+  assert.match(feedHtml, /civitai\.com\/models\/2563220/);
+  assert.match(feedHtml, /modelVersionId=…/);
+  assert.match(feedHtml, /Name, such as <code>Jenescript<\/code>/);
+  assert.match(feedHtml, /Copy to another hub/);
+  assert.match(feedHtml, /Move to another hub/);
+  assert.match(feedHtml, /Create a new hub/);
+  assert.doesNotMatch(feedHtml, /bulk-enable|bulk-disable|Local display name|After saving/);
+  assert.match(feedScript, /edit\.textContent = "Options"/);
+  assert.match(feedScript, /cleanSourceTypePrefix/);
+  assert.match(feedScript, /if \(source\.type === "model"\) text\.append\(meta\)/);
+  assert.match(feedScript, /source\.versionNames\?\.\[onlyVersionId\]/);
+  assert.match(feedScript, /if \(modelSources\.some\(isCheckpointSource\)\) return null/);
+  assert.match(feedScript, /cardSourceLabel\(label\)/);
+  assert.match(feedScript, /sourceModelTypes\[s\.label\] = s\.modelType/);
+  assert.match(feedCss, /creator-line \.user[\s\S]+white-space:\s*normal/);
+  assert.match(feedCss, /creator-line \.made-with[\s\S]+text-overflow:\s*ellipsis/);
   assert.ok(feedHtml.indexOf('id="lightbox-collect"') < feedHtml.indexOf('class="lightbox-action-bar"'));
   assert.match(feedHtml, /id="lightbox-buzz"[^>]+target="_blank"/);
   assert.match(feedScript, /"Prompt published", "", "P"/);
@@ -123,6 +153,9 @@ test("Firefox release uses an MV3 event page and Mozilla signing metadata", asyn
       "civitai-multihub@trunksn1.github.io",
     );
     assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, "140.0");
+    assert.deepEqual(manifest.browser_specific_settings.gecko_android, {
+      strict_min_version: "142.0",
+    });
     assert.deepEqual(
       manifest.browser_specific_settings.gecko.data_collection_permissions,
       {

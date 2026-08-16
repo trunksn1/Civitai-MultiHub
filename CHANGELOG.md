@@ -2,25 +2,55 @@
 
 All notable changes to MultiHub will be documented here.
 
-## 0.12.0 - 2026-08-08
-
-### Added
-
-- A clean public repository history containing only the Chrome extension, public documentation,
-  tests, release tooling, and store artwork.
-- Automated GitHub CI for tests, deterministic package builds, and package verification.
-- A concise installation guide with four annotated visuals for non-technical Chrome users.
-
-### Changed
-
-- Public distribution now presents one recommended manual-install ZIP and its SHA-256 checksum.
-- The README is shorter and routes detailed installation and feature information into public guides.
+## 0.12.3 - 2026-08-13
 
 ### Fixed
 
-- Corrected contradictory API-key wording in the 0.11.0 changelog.
-- Long comments and replies now report a clear local error when HTML formatting would exceed the
-  validated Civitai request limit.
+- Corrected card attribution so checkpoint sources do not repeat the same checkpoint as both the
+  source and the resolved resource.
+- Kept creator names readable while shortening only long model/checkpoint attribution where card
+  width is limited.
+- Removed redundant source-type prefixes from collection, checkpoint, LoRA, and embedding labels.
+
+## 0.12.2 - 2026-08-13
+
+### Added
+
+- Added a dedicated hub manager for defaults, renaming, multi-delete, and single- or multi-hub
+  export/import.
+- Added source aliases, enable/disable controls, bulk management, and copy/move actions with inline
+  destination-hub creation.
+- Added model-version choices from Civitai pages and preserved version display names in source rows.
+
+### Changed
+
+- Improved the placement and reliability of Add-to-MultiHub actions on creator, model, collection,
+  and homepage sections.
+- Restricted collection pickers to owned image collections and added explicit multi-select Save.
+
+## 0.12.1 - 2026-08-12
+
+### Added
+
+- Added NEW markers, viewed-state filters, creator avatars, checkpoint attribution, generation
+  signals, Remix availability, and always-visible reaction/Buzz controls to image cards.
+- Added hub search, alphabetical hub selection, and inline named-hub creation to source pickers.
+- Added source actions from creators, models, collections, generation resources, preview sources,
+  commenter names, Featured Images, and public collection headings.
+
+### Changed
+
+- Reorganized the image preview around prompts, resources, generation details, collection actions,
+  reactions, and comment threads.
+
+## 0.11.2 - 2026-08-12
+
+### Added
+
+- Policy-scoped Chrome Web Store and Firefox Add-ons packages limited to `civitai.com` and
+  PG/PG-13 browsing levels.
+- Firefox MV3 event-page metadata and install-time data-collection declarations.
+- Reproducible store-package verification and public store privacy-scope documentation.
 
 ## 0.11.1 - 2026-08-08
 
@@ -60,8 +90,8 @@ All notable changes to MultiHub will be documented here.
   open, and lifts any site popover left without one.
 - Image previews show comments and generation details without an API key. Both are now read through
   the signed-in Civitai tab, like collections already were, so a logged-in user sees what the site
-  would show them. An API key remains a fallback for when no Civitai tab is open and is still
-  required for reactions; comments can use either the signed-in session or the key fallback.
+  would show them. An API key remains a fallback for when no Civitai tab is open, and is still
+  required to post a comment or a reaction.
 - The image preview has a comment section again. It was hidden whenever the feed's own comment count
   for that image was zero, which is most images, so it looked as though the section had gone; it is
   now always present and says when there is nothing to show.

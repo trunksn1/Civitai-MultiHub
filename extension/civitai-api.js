@@ -510,7 +510,9 @@ export function toggleImageReaction(imageId, reaction, settings, signal) {
 
 export async function resolveWritableCollections(settings, signal) {
   const capability = CIVITAI_CAPABILITIES.collectionList;
-  const input = encodeURIComponent(JSON.stringify({ json: { permissions: ["ADD", "ADD_REVIEW"] } }));
+  const input = encodeURIComponent(JSON.stringify({
+    json: { permissions: ["ADD", "ADD_REVIEW"], type: "Image" },
+  }));
   return withCapability(capability, async () => {
     const data = await sessionFirst(
       () => sessionRequest("list-writable-collections", {}, settings, signal, capability),
@@ -519,34 +521,43 @@ export async function resolveWritableCollections(settings, signal) {
     );
     const collections = unwrapTrpcData(data, capability);
     if (!Array.isArray(collections)) throw invalidResponse(capability);
-    return collections;
+    return collections.filter((collection) => collection?.isOwner === true);
   });
 }
 
-export function addImageToCollection(imageId, collection, settings, signal) {
+export function addImageToCollections(imageId, collections, settings, signal) {
   const capability = CIVITAI_CAPABILITIES.collectionWrite;
+  if (!Array.isArray(collections) || collections.length === 0 || collections.length > 50) {
+    throw new Error("Select between 1 and 50 collections");
+  }
   const input = {
     type: "Image",
     imageId: Number(imageId),
-    collections: [{
+    collections: collections.map((collection) => ({
       collectionId: collection.id,
       userId: collection.userId,
       read: collection.read,
       tagId: null,
-    }],
+    })),
   };
   return sessionFirst(
     () => withCapability(capability, () => sessionRequest(
       "add-image-to-collection",
       {
         imageId: input.imageId,
-        collection: { id: collection.id, userId: collection.userId, read: collection.read },
+        collections: collections.map((collection) => ({
+          id: collection.id, userId: collection.userId, read: collection.read,
+        })),
       },
       settings, signal, capability
     )),
     () => trpcMutation("collection.saveItem", input, settings, signal, capability),
     settings
   );
+}
+
+export function addImageToCollection(imageId, collection, settings, signal) {
+  return addImageToCollections(imageId, [collection], settings, signal);
 }
 
 // Posted as the user, through their signed-in tab, so leaving a comment needs no
@@ -996,6 +1007,7 @@ export async function openSourceStreams(source, feed, settings, signal) {
     href: specific
       ? `/models/${source.modelId}?modelVersionId=${v.id}`
       : `/models/${source.modelId}`,
+    modelType: model.type,
     nextUrl: imagesUrl(settings, { ...base, modelVersionId: v.id }),
     lastItem: null,
   }));

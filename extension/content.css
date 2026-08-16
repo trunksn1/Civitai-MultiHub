@@ -48,11 +48,10 @@
   background: #37b24d;
 }
 
-#cmh-page-action .cmh-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 2;
+#cmh-page-action .cmh-menu,
+.cmh-page-menu {
+  position: fixed;
+  z-index: 2147483646;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -68,7 +67,8 @@
   overflow-y: auto;
 }
 
-#cmh-page-action .cmh-menu-title {
+#cmh-page-action .cmh-menu-title,
+.cmh-page-menu .cmh-menu-title {
   padding: 4px 12px 2px;
   color: #909296;
   font-size: 11px;
@@ -76,18 +76,22 @@
   letter-spacing: 0.5px;
 }
 
-#cmh-page-action .cmh-menu[hidden] { display: none; }
+#cmh-page-action .cmh-menu[hidden],
+.cmh-page-menu[hidden] { display: none; }
 
-#cmh-page-action .cmh-menu-header {
+#cmh-page-action .cmh-menu-header,
+.cmh-page-menu .cmh-menu-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-#cmh-page-action .cmh-menu-header .cmh-menu-title { flex: 1; }
+#cmh-page-action .cmh-menu-header .cmh-menu-title,
+.cmh-page-menu .cmh-menu-header .cmh-menu-title { flex: 1; }
 
-#cmh-page-action .cmh-menu-close {
+#cmh-page-action .cmh-menu-close,
+.cmh-page-menu .cmh-menu-close {
   width: 26px;
   height: 26px;
   padding: 0;
@@ -100,9 +104,11 @@
   cursor: pointer;
 }
 
-#cmh-page-action .cmh-menu-close:hover { background: #34344a; color: #fff; }
+#cmh-page-action .cmh-menu-close:hover,
+.cmh-page-menu .cmh-menu-close:hover { background: #34344a; color: #fff; }
 
-#cmh-page-action .cmh-menu-item {
+#cmh-page-action .cmh-menu-item,
+.cmh-page-menu .cmh-menu-item {
   padding: 6px 12px;
   border: none;
   border-radius: 6px;
@@ -113,7 +119,8 @@
   cursor: pointer;
 }
 
-#cmh-page-action .cmh-menu-item:hover {
+#cmh-page-action .cmh-menu-item:hover,
+.cmh-page-menu .cmh-menu-item:hover {
   background: #4c6ef5;
 }
 
@@ -124,11 +131,13 @@
 }
 
 #cmh-page-action .cmh-menu-back,
+.cmh-page-menu .cmh-menu-back,
 .cmh-section-menu .cmh-menu-back {
   color: #adb5bd;
 }
 
 #cmh-page-action .cmh-menu-create,
+.cmh-page-menu .cmh-menu-create,
 .cmh-section-menu .cmh-menu-create {
   border: 1px solid rgba(55, 178, 77, .55);
   color: #b2f2bb;
@@ -225,7 +234,39 @@
 }
 
 #cmh-page-action[data-cmh-placement="model"] {
-  margin-left: 6px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: max-content;
+  margin: 0 8px 0 auto;
+}
+
+#cmh-page-action[data-cmh-placement="model"] .cmh-add {
+  min-height: 28px;
+  padding: 5px 10px;
+  font-size: 11px;
+  box-shadow: none;
+}
+
+.cmh-model-action-host {
+  box-sizing: border-box !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}
+
+.cmh-model-action-host > #cmh-page-action[data-cmh-placement="model"] {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  margin: 0;
+  padding: 8px 14px 10px;
+  border-top: 1px solid rgba(134, 142, 150, .28);
+  justify-content: flex-start;
+}
+
+.cmh-model-action-host > #cmh-page-action[data-cmh-placement="model"] .cmh-add {
+  width: auto;
+  max-width: 100%;
 }
 
 .cmh-page-action-host {
@@ -272,10 +313,8 @@
 }
 
 .cmh-section-menu {
-  position: absolute;
-  top: calc(100% + 7px);
-  left: 0;
-  z-index: 4;
+  position: fixed;
+  z-index: 2147483646;
   display: flex;
   flex-direction: column;
   gap: 3px;

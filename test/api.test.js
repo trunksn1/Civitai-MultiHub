@@ -5,7 +5,7 @@ import {
   clearModelCache, resolveModel, resolveCreatorProfile, resolveCollection,
   openSourceStreams, fetchStreamPage,
   resolveImageGenerationData, resolveImageComments,
-  toggleImageReaction, resolveWritableCollections, addImageToCollection,
+  toggleImageReaction, resolveWritableCollections, addImageToCollection, addImageToCollections,
   postComment, resolveAccountBrowsingLevels, userAvatarUrl, imageBuzzAmount,
   CIVITAI_CAPABILITIES, getCivitaiCapabilityState, resetCivitaiCapabilities,
   explainCivitaiError,
@@ -119,6 +119,7 @@ test("public image collections resolve and paginate as first-class sources", asy
       { globalSort: "newest", period: "AllTime" }, settings
     );
     assert.equal(stream.label, "Collection: Highly creative");
+    assert.equal(stream.modelType, undefined);
     const items = await fetchStreamPage(stream, settings);
     assert.equal(items[0].username, "Alice");
     assert.equal(items[0].url,
@@ -337,7 +338,8 @@ test("collection account actions prefer the signed-in Civitai session without an
           callback({
             ok: true, status: 200,
             payload: { result: { data: { json: [
-              { id: 12, name: "Favorites", userId: 3, read: "Public" },
+              { id: 12, name: "Favorites", userId: 3, read: "Public", isOwner: true },
+              { id: 13, name: "Contributed", userId: 4, read: "Public", isOwner: false },
             ] } } },
           });
         } else {
@@ -350,7 +352,10 @@ test("collection account actions prefer the signed-in Civitai session without an
     clearModelCache();
     const settings = { linkDomain: "civitai.red" };
     const collections = await resolveWritableCollections(settings);
-    await addImageToCollection(999, collections[0], settings);
+    assert.deepEqual(collections.map((collection) => collection.name), ["Favorites"]);
+    await addImageToCollections(999, [collections[0], {
+      id: 14, name: "Second", userId: 3, read: "Private", isOwner: true,
+    }], settings);
     assert.equal(fetchCalls, 0);
     assert.deepEqual(messages[0], {
       type: "civitai-account-request",
@@ -362,7 +367,10 @@ test("collection account actions prefer the signed-in Civitai session without an
       operation: "add-image-to-collection",
       preferredHost: "civitai.red",
       imageId: 999,
-      collection: { id: 12, userId: 3, read: "Public" },
+      collections: [
+        { id: 12, userId: 3, read: "Public" },
+        { id: 14, userId: 3, read: "Private" },
+      ],
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -402,7 +410,9 @@ test("collection account actions fall back to a scoped API key when no Civitai t
     requests.push({ url, options });
     if (url.includes("collection.getAllUser")) return {
       ok: true,
-      json: async () => ({ result: { data: { json: [{ id: 12, name: "Favorites", userId: 3, read: "Public" }] } } }),
+      json: async () => ({ result: { data: { json: [{
+        id: 12, name: "Favorites", userId: 3, read: "Public", isOwner: true,
+      }] } } }),
     };
     return { ok: true, text: async () => "" };
   };
@@ -671,7 +681,12 @@ test("model and collection reads follow the browsed host", async () => {
   try {
     clearModelCache();
     const settings = { linkDomain: "civitai.red" };
-    await resolveModel(42, settings);
+    const [modelStream] = await openSourceStreams(
+      { type: "model", modelId: 42 },
+      { globalSort: "newest", period: "AllTime" },
+      settings
+    );
+    assert.equal(modelStream.modelType, "LORA");
     await resolveCollection(5, settings);
     assert.ok(requested.every((url) => url.startsWith("https://civitai.red/")), requested.join(" "));
   } finally {
