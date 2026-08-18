@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MultiHub for Civitai - Unofficial",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Create combined Civitai media feeds from selected creators, models, model versions, and public collections.",
   "icons": {
     "16": "icons/multihub-16.png",

@@ -2,6 +2,12 @@
 
 All notable changes to MultiHub will be documented here.
 
+## 0.12.4 - 2026-08-19
+
+### Changed
+
+- Minor bug fixes.
+
 ## 0.12.3 - 2026-08-13
 
 ### Fixed

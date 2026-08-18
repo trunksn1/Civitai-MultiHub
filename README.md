@@ -9,26 +9,36 @@ can open one focused feed instead of checking the same pages one by one.
 Civitai is excellent for broad discovery. MultiHub is for the creators and resources you already
 know you do not want to miss.
 
-> **Chrome installation:** [install MultiHub from the Chrome Web Store](https://chromewebstore.google.com/detail/multihub-for-civitai-unof/nojkmfegfgplbclepjlnkmdcmngeahbj).
-> Store installations update automatically. Version `0.12.3` is the current release.
-
-> **Firefox status (August 13, 2026):** version `0.12.3` has been submitted for Mozilla review. The
-> Firefox Add-ons page is not public yet, so this README will add the installation link after Mozilla
-> publishes it.
+> **Browser installation:** [install MultiHub from the Chrome Web Store](https://chromewebstore.google.com/detail/multihub-for-civitai-unof/nojkmfegfgplbclepjlnkmdcmngeahbj)
+> or [install MultiHub from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/civitai-multihub-unofficial/).
+> Store installations update automatically. Version `0.12.4` is the current GitHub release;
+> marketplace availability can lag while browser-store reviews are in progress.
 
 This repository is the auditable open-source implementation of the extension. It lets users and
 reviewers inspect exactly what MultiHub stores, which Civitai requests it makes, and how release
 packages are built. Manual installation remains available for development, security review and the
-complete GitHub build, but ordinary Chrome users should use the Web Store.
+complete GitHub build, but ordinary Chrome and Firefox users should use their browser's store.
 
 > **Independent project.** MultiHub is not an official Civitai product, partnership, or endorsement.
 
 **[Install for Chrome](https://chromewebstore.google.com/detail/multihub-for-civitai-unof/nojkmfegfgplbclepjlnkmdcmngeahbj)** ·
+**[Install for Firefox](https://addons.mozilla.org/en-US/firefox/addon/civitai-multihub-unofficial/)** ·
 **[Audit or install manually](#manual-installation-for-development-or-security-review)** · **[Privacy](PRIVACY.md)** ·
 **[Security](SECURITY.md)** ·
 **[Report an issue](https://github.com/trunksn1/Civitai-MultiHub/issues)**
 
-![Example MultiHub feed combining creators, models and a public collection](store-assets/store-screenshot-feed-1280x800.png)
+## One hub for every interest
+
+A hub is a group of Civitai galleries—creators, checkpoints, LoRAs, selected model versions, and
+public collections—that MultiHub turns into one feed. Make one for creators you check every day,
+another for a particular character or workflow, and another for anything else you want to keep
+separate.
+
+Instead of relying on one broad discovery or following feed, you choose exactly which sources
+belong together. Switch hubs and the entire feed changes. Results from every source are sorted
+together and deduplicated, so media that matches several sources still appears only once.
+
+![Switching MultiHub hubs changes the complete Civitai feed](store-assets/readme-switch-hubs-demo.gif)
 
 ## Why use MultiHub?
 
@@ -43,19 +53,32 @@ complete GitHub build, but ordinary Chrome users should use the Web Store.
 - **Keep control of your data.** There is no MultiHub account, analytics, advertising, or
   developer-operated application server.
 
-The Chrome Web Store edition runs on `civitai.com` and its PG/PG-13 range. The complete manual
-package also supports `civitai.red`; see the manual installation and privacy sections before using
-that build.
+Starting with `0.12.4`, the Chrome Web Store, Firefox Add-ons, and manual packages run on both
+`civitai.com` and `civitai.red`. The `.red` domain can expose mature user-generated content according
+to the browsing levels selected in the user's Civitai account.
 
 ## Install from the Chrome Web Store
 
 1. Open [MultiHub for Civitai - Unofficial in the Chrome Web Store](https://chromewebstore.google.com/detail/multihub-for-civitai-unof/nojkmfegfgplbclepjlnkmdcmngeahbj).
 2. Select **Add to Chrome**, then approve the permissions shown by Chrome.
-3. Refresh any `civitai.com` tab that was already open.
+3. Refresh any `civitai.com` or `civitai.red` tab that was already open.
 4. Optionally pin MultiHub from Chrome's extensions menu. Its toolbar icon opens the standalone feed.
 
-The store build is deliberately limited to `civitai.com` and its PG/PG-13 range. It does not request
-access to `civitai.red`. Chrome handles updates automatically.
+Chrome handles updates automatically. The `0.12.4` package requests access to both Civitai domains;
+the previously installed package remains limited to `civitai.com` until the update is approved.
+Existing users may be asked to approve the added `civitai.red` site access.
+
+## Install from Firefox Add-ons
+
+1. Open
+   [MultiHub for Civitai - Unofficial on Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/civitai-multihub-unofficial/).
+2. Select **Add to Firefox**, then approve the permissions shown by Firefox.
+3. Refresh any `civitai.com` or `civitai.red` tab that was already open.
+4. Optionally pin MultiHub to the Firefox toolbar. Its toolbar icon opens the standalone feed.
+
+Firefox updates the add-on automatically. The `0.12.4` package requests access to both Civitai
+domains; the previously installed package remains limited to `civitai.com` until the update is
+approved. Existing users may be asked to approve the added `civitai.red` site access.
 
 ## Manual installation for development or security review
 
@@ -65,14 +88,13 @@ folder that contains `manifest.json` directly. Manually installed copies do not 
 ### Install a signed release asset manually
 
 Take the newest entry on the
-[Releases page](https://github.com/trunksn1/Civitai-MultiHub/releases), currently `v0.12.3`. Every
+[Releases page](https://github.com/trunksn1/Civitai-MultiHub/releases), currently `v0.12.4`. Every
 release from `v0.9.0` on carries its packages under **Assets**; older versions remain published so
 an installation can be pinned or rolled back.
 
-1. Under the `v0.12.3` release, download `civitai-multihub-full-v0.12.3.zip` and its `.sha256` file.
+1. Under the `v0.12.4` release, download `civitai-multihub-full-v0.12.4.zip` and its `.sha256` file.
    Make sure the ZIP is an asset on the **Releases** page, not GitHub's automatic source archive.
-   Marketplace ZIPs are intentionally limited to `civitai.com`; use the `full` asset for the
-   complete `.com` + `.red` manual installation.
+   All `0.12.4` package variants include both Civitai domains.
 2. Extract the ZIP to a permanent folder. Open it and confirm that `manifest.json` is directly
    inside that folder.
 3. Open `chrome://extensions` and enable **Developer mode**.
@@ -89,6 +111,20 @@ an installation can be pinned or rolled back.
    repository root. The selected `extension` folder must contain `manifest.json` directly.
 5. Refresh every Civitai tab that was already open.
 
+### Move from an unpacked installation to a store edition
+
+A store edition is a separate browser-extension installation, so hubs stored by an unpacked copy do
+not transfer automatically. Move them without risking the original copy:
+
+1. Open the unpacked MultiHub installation and export the hubs you want to keep.
+2. Install MultiHub from the Chrome Web Store or Firefox Add-ons using the links above.
+3. Open the store edition and import the exported hub file.
+4. Confirm that the expected hubs and sources are present, then remove the unpacked installation
+   from `chrome://extensions` or `about:addons`.
+
+API keys and viewed-image history are deliberately excluded from hub exports. Configure a key again
+only if you need one. Chrome and Firefox store editions support `civitai.red` starting with `0.12.4`.
+
 ## Quick start
 
 1. Open MultiHub from the browser toolbar or the injected **MultiHub** item on Civitai.
@@ -100,8 +136,8 @@ an installation can be pinned or rolled back.
 
 ## Update, remove, or repair the extension
 
-Chrome Web Store installations update automatically. The following instructions apply only to an
-unpacked/manual installation.
+Chrome Web Store and Firefox Add-ons installations update automatically. The following instructions
+apply only to an unpacked/manual installation.
 
 To update a Release installation, export any important hubs first, download and verify the newer
 release asset, and replace the files inside the same permanent extension folder. Then open
@@ -225,6 +261,8 @@ On supported creator, model and collection pages, an **Add to MultiHub** button 
 Checkpoint, LoRA and embedding pages with more than one version first ask whether to follow all
 versions or only the version currently shown. Models with a single version go directly to the hub
 picker; creator and collection pages never show a version question.
+
+![Add creators, checkpoints, LoRAs, and public collections directly from their Civitai pages](store-assets/readme-add-sources-from-civitai.png)
 
 The Civitai home page also receives full-text actions beside **Featured Images** and visible public
 collection headings: **Add Featured to MultiHub** and **Add this collection to
@@ -652,7 +690,7 @@ collection URL/pagination handling, deduplication, global comparators, API respo
 cancellation, authenticated action payloads, session-versus-persistent API-key behavior, and
 release-package integrity.
 
-Build and verify the policy-scoped Chrome Web Store candidate with:
+Build and verify the Chrome Web Store candidate with:
 
 ```powershell
 npm run build:chrome
@@ -667,8 +705,8 @@ npm run build:all
 
 Generated files appear under `dist/`, which is intentionally ignored by Git. Each release contains
 an unpacked directory, a ZIP with `manifest.json` at its root, a SHA-256 checksum, and a JSON build
-report. Marketplace packages request only `civitai.com` and permit its PG/PG-13 range. They do not
-request `civitai.red`; the complete `.com` + `.red` build remains the `full` GitHub/manual package.
+report. Chrome Web Store, Firefox Add-ons, and full/manual packages all request both Civitai hosts
+and retain the PG, PG-13, R, X, and XXX browsing levels available through `civitai.red`.
 The Firefox package also converts the background service worker declaration to Firefox's MV3 event
 page format and includes Firefox's data-transmission consent metadata. Its desktop minimum remains
 Firefox 140; Firefox for Android requires version 142 because that is where the consent manifest key
@@ -679,9 +717,10 @@ Manual checks are still required for browser integration:
 - Standalone and embedded opening/closing.
 - Loading `dist/chrome-store/unpacked` in `chrome://extensions` and confirming the embedded feed's
   scripts, styles and media load after the web-accessible-resource reduction.
-- Civitai SPA navigation and header popovers on `civitai.com`.
-- Confirming the store build has no `civitai.red` option, host permission, or content-script match.
-- PG and PG-13 browsing-level combinations.
+- Civitai SPA navigation and header popovers on `civitai.com` and `civitai.red`.
+- Confirming both store builds include the `civitai.red` option, host permission, and content-script
+  match.
+- PG and PG-13 browsing-level combinations on `.com`, plus R, X, and XXX combinations on `.red`.
 - Creator, model and public collection sources.
 - Refresh and hub-switch cancellation.
 - Source aliases, versions, enabling, copying, moving and bulk removal.

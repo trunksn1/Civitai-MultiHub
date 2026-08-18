@@ -1,6 +1,6 @@
-// Runtime release policy. The release builder replaces this module in store
-// packages so marketplace builds can have a narrower host/content scope while
-// the source and manual package retain the complete feature set.
+// Runtime release policy. The release builder replaces this module so each
+// package records its distribution channel while retaining the complete
+// Civitai host and browsing-level feature set.
 
 export const DISTRIBUTION = Object.freeze({
   channel: "full",

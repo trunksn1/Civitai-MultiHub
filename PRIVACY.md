@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 11 August 2026
+Last updated: 19 August 2026
 
 ## Overview
 
@@ -9,10 +9,11 @@ from Civitai. The project does not operate an analytics, advertising, account, o
 server. Extension data stays in the user's browser except for requests that must be sent directly
 to Civitai to provide the requested functionality.
 
-The Chrome Web Store and Firefox Add-ons packages request access only to `civitai.com` and permit
-only its PG/PG-13 browsing range. They do not request access to `civitai.red`. The complete GitHub
-and manual-install package also supports `civitai.red` and its wider user-selected browsing range.
-The data flows described below are otherwise the same unless a section says otherwise.
+Starting with version `0.12.4`, the Chrome Web Store, Firefox Add-ons, GitHub, and manual-install
+packages request access to both `civitai.com` and `civitai.red`. The `.com` domain exposes its SFW
+range; the `.red` domain can expose the wider browsing range selected in the user's Civitai account.
+The currently published `0.12.3` marketplace packages remain limited to `civitai.com` until the
+updated packages are submitted and approved. The data flows described below are otherwise the same.
 
 ## Data stored in the browser
 

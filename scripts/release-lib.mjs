@@ -38,19 +38,19 @@ export const PACKAGE_FILES = Object.freeze([
 const VARIANTS = Object.freeze({
   chrome: {
     id: "chrome-store",
-    purpose: "Chrome Web Store policy-scoped candidate",
+    purpose: "Chrome Web Store candidate with complete Civitai domain support",
     browser: "chrome",
     channel: "chrome-web-store",
-    allowedCivitaiHosts: ["civitai.com"],
-    allowedBrowsingLevels: [1, 2],
+    allowedCivitaiHosts: ["civitai.com", "civitai.red"],
+    allowedBrowsingLevels: [1, 2, 4, 8, 16],
   },
   firefox: {
     id: "firefox-store",
-    purpose: "Firefox Add-ons policy-scoped candidate",
+    purpose: "Firefox Add-ons candidate with complete Civitai domain support",
     browser: "firefox",
     channel: "firefox-addons",
-    allowedCivitaiHosts: ["civitai.com"],
-    allowedBrowsingLevels: [1, 2],
+    allowedCivitaiHosts: ["civitai.com", "civitai.red"],
+    allowedBrowsingLevels: [1, 2, 4, 8, 16],
   },
   full: {
     id: "full",
@@ -397,7 +397,8 @@ export async function buildRelease({ variantName = "chrome", outputRoot = DEFAUL
     variant: variant.id,
     purpose: variant.purpose,
     version: manifest.version,
-    matureSubmission: false,
+    matureSubmission: variant.allowedCivitaiHosts.includes("civitai.red")
+      || variant.allowedBrowsingLevels.some((level) => level > 2),
     contentRange: variant.allowedBrowsingLevels.join(","),
     hosts: manifest.host_permissions,
     zip: packageBase + ".zip",
