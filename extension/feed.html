@@ -12,7 +12,10 @@
       <h1>MultiHub for Civitai</h1>
       <div class="title-actions">
         <button id="card-details-toggle" type="button" class="icon-button card-details-icon" aria-pressed="true">
-          <span class="card-details-glyph" aria-hidden="true">i</span>
+          <svg class="card-details-glyph" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="6" rx="2"></rect>
+            <rect x="4" y="14" width="16" height="6" rx="2"></rect>
+          </svg>
         </button>
         <button id="settings-toggle" type="button" class="icon-button" title="Settings" aria-label="Settings" aria-expanded="false">⚙</button>
       </div>
@@ -111,6 +114,13 @@
           <option value="resources">Show images with resources</option>
           <option value="complete-metadata">Show images with Prompt + resources</option>
         </select>
+      </label>
+      <label class="feed-option-switch" for="card-details-switch">
+        <span class="feed-option-switch-copy">
+          <strong>Creator and model info</strong>
+          <small>Shown under each card</small>
+        </span>
+        <input id="card-details-switch" type="checkbox" role="switch" />
       </label>
       <button id="refresh">Refresh feed</button>
     </section>

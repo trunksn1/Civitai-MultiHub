@@ -1,7 +1,7 @@
 # Firefox Add-ons source build instructions
 
 This source archive reproduces the submitted Firefox Add-ons package for
-MultiHub for Civitai version 0.13.0.
+MultiHub for Civitai version 0.13.1.
 
 ## Environment
 
@@ -37,13 +37,13 @@ modules.
 The command creates the exact submitted package at:
 
 ```text
-dist/civitai-multihub-firefox-store-v0.13.0.zip
+dist/civitai-multihub-firefox-store-v0.13.1.zip
 ```
 
 Expected SHA-256:
 
 ```text
-e18cf12f46b282555b1ad6042578b084b2f79835156bda87e41a65cae165eb53
+2abb12faa767989b752181929795ce9961a88f0451a69b4871bf648af4007171
 ```
 
 The build copies the allow-listed source files, generates the Firefox-specific

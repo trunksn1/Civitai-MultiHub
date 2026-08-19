@@ -12,7 +12,7 @@ CORE TEST FLOW (NO ACCOUNT OR API KEY REQUIRED)
 6. Return to the MultiHub tab or embedded panel and confirm that public media loads and can be sorted and filtered.
 
 ACCOUNT-BACKED FEATURES
-No Civitai account is required for the core feed workflow. Comments, the reviewer's owned image collections, generation data, and user-triggered writes can use the reviewer's own signed-in Civitai tab. Reactions can use an optional Civitai API key. No reviewer credentials are embedded in the package or required to verify the core purpose.
+No Civitai account is required for the core feed workflow. Comments, the reviewer's owned image collections, generation data, and user-triggered writes can use the reviewer's own signed-in Civitai tab. Reactions use that signed-in session first and retain an optional Civitai API key only as a fallback. No reviewer credentials are embedded in the package or required to verify the core purpose.
 
 NETWORK AND DATA
 The extension has no analytics, ads, remote configuration, or developer-operated backend. Requests go directly to the selected Civitai domain over HTTPS. Hub configuration stays in browser-managed extension storage. An optional API key is session-only by default and is persisted only after the user explicitly enables the remember option. It is excluded from exports and application logs.

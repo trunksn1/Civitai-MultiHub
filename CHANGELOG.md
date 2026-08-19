@@ -2,6 +2,16 @@
 
 All notable changes to MultiHub will be documented here.
 
+## 0.13.1 - 2026-08-19
+
+### Changed
+
+- Replaced the ambiguous card-information `i` shortcut with a layout/details icon whose muted and
+  blue-tinted states communicate whether creator and model information is visible.
+- Added a labeled **Creator and model info** switch under Feed options. The switch and header
+  shortcut stay synchronized, use the same per-hub preference, and preserve the visible feed
+  position when the card layout changes.
+
 ## 0.13.0 - 2026-08-19
 
 ### Fixed

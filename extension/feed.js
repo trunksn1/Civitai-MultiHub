@@ -3026,10 +3026,11 @@ function syncFeedControls() {
   document.body.classList.toggle("compact", feed().density === "compact");
   const cardDetailsButton = $("card-details-toggle");
   const cardDetailsLabel = feed().showCardDetails
-    ? "Hide information under cards" : "Show information under cards";
+    ? "Hide creator and model info" : "Show creator and model info";
   cardDetailsButton.title = cardDetailsLabel;
   cardDetailsButton.setAttribute("aria-label", cardDetailsLabel);
   cardDetailsButton.setAttribute("aria-pressed", String(feed().showCardDetails));
+  $("card-details-switch").checked = feed().showCardDetails;
   document.body.classList.toggle("hide-card-details", !feed().showCardDetails);
   $("autoplay-videos").checked = feed().autoplayVideos;
   $("hide-viewed").checked = feed().hideViewed;
@@ -3266,11 +3267,17 @@ function bindSettings() {
     await saveConfig(config);
     rebuildRendered({ preserveAnchor: true, reason: "density-change" });
   });
-  $("card-details-toggle").addEventListener("click", async () => {
-    feed().showCardDetails = !feed().showCardDetails;
+  const setCardDetailsVisibility = async (showCardDetails) => {
+    feed().showCardDetails = showCardDetails;
     await saveConfig(config);
     syncFeedControls();
     rebuildRendered({ preserveAnchor: true, reason: "card-details-change" });
+  };
+  $("card-details-toggle").addEventListener("click", async () => {
+    await setCardDetailsVisibility(!feed().showCardDetails);
+  });
+  $("card-details-switch").addEventListener("change", async (event) => {
+    await setCardDetailsVisibility(event.target.checked);
   });
   $("autoplay-videos").addEventListener("change", async (e) => {
     feed().autoplayVideos = e.target.checked;

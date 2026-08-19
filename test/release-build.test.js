@@ -163,8 +163,15 @@ test("source UI keeps the corrected hub picker and preview contracts", async () 
   assert.match(feedHtml, /id="card-details-toggle"/);
   assert.ok(feedHtml.indexOf('id="card-details-toggle"') < feedHtml.indexOf('id="settings-toggle"'));
   assert.equal(feedHtml.match(/id="card-details-toggle"/g)?.length, 1);
+  assert.match(feedHtml, /id="card-details-toggle"[\s\S]+<rect x="4" y="4" width="16" height="6"/);
+  assert.doesNotMatch(feedHtml, /card-details-glyph" aria-hidden="true">i</);
+  assert.match(feedHtml, /id="card-details-switch"[^>]+role="switch"/);
+  assert.match(feedHtml, /Creator and model info/);
   assert.match(feedScript, /cardDetailsButton\.setAttribute\("aria-pressed", String\(feed\(\)\.showCardDetails\)\)/);
-  assert.match(feedCss, /\.card-details-icon\[aria-pressed="true"\][\s\S]+background:\s*#1971c2/);
+  assert.match(feedScript, /\$\("card-details-switch"\)\.checked = feed\(\)\.showCardDetails/);
+  assert.match(feedScript, /setCardDetailsVisibility\(event\.target\.checked\)/);
+  assert.match(feedCss, /\.card-details-icon\[aria-pressed="true"\][\s\S]+background:\s*rgba\(34,139,230,\.12\)/);
+  assert.match(feedCss, /\.feed-option-switch input:checked\s*\{\s*background:\s*#228be6/);
   assert.match(feedScript, /const INITIAL_BATCH = 15/);
   assert.match(feedScript, /const STREAM_FETCH_CONCURRENCY = 6/);
   assert.match(feedScript, /const LOAD_AHEAD_PX = 3200/);

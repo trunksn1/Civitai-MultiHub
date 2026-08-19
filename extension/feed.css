@@ -50,17 +50,16 @@ body.sidebar-collapsed .sidebar-toggle { left: 0; }
 #sidebar .sidebar-title .icon-button:hover { background: #373a40; }
 #sidebar .sidebar-title .card-details-icon { display: grid; height: 34px; place-items: center; }
 #sidebar .sidebar-title .card-details-icon[aria-pressed="false"] {
-  border-color: #495057; background: #2c2e33; color: #868e96;
+  border-color: transparent; background: transparent; color: #868e96;
 }
 #sidebar .sidebar-title .card-details-icon[aria-pressed="true"] {
-  border-color: #339af0; background: #1971c2; color: #fff;
+  border-color: rgba(51,154,240,.28); background: rgba(34,139,230,.12); color: #4dabf7;
 }
 #sidebar .sidebar-title .card-details-icon[aria-pressed="false"]:hover { background: #373a40; color: #dee2e6; }
-#sidebar .sidebar-title .card-details-icon[aria-pressed="true"]:hover { background: #228be6; }
+#sidebar .sidebar-title .card-details-icon[aria-pressed="true"]:hover { background: rgba(34,139,230,.2); }
 .card-details-glyph {
-  display: grid; width: 18px; height: 18px; place-items: center;
-  border: 1.5px solid currentColor; border-radius: 50%;
-  font: 700 13px/1 Georgia, serif;
+  width: 19px; height: 19px; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
 /* The browsing level is Civitai's setting, so this only reports what is in
    force and where it comes from. */
@@ -99,6 +98,27 @@ body.sidebar-collapsed .sidebar-toggle { left: 0; }
 #sidebar label { display: block; font-size: 12px; color: #909296; }
 #sidebar .check-label { display: flex; align-items: center; gap: 7px; margin: 5px 0 9px; color: #c1c2c5; }
 #sidebar .check-label input { width: auto; margin: 0; }
+#sidebar .feed-option-switch {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 10px 0 12px; padding: 10px 0; border-top: 1px solid #373a40;
+  color: #dee2e6; cursor: pointer;
+}
+.feed-option-switch-copy { display: grid; gap: 2px; min-width: 0; }
+.feed-option-switch-copy strong { font-size: 12px; font-weight: 650; color: #dee2e6; }
+.feed-option-switch-copy small { font-size: 11px; color: #868e96; }
+#sidebar .feed-option-switch input {
+  appearance: none; position: relative; width: 34px; height: 20px; flex: 0 0 34px;
+  margin: 0; padding: 0; border: 0; border-radius: 999px; background: #5c5f66;
+  cursor: pointer; transition: background .15s ease;
+}
+#sidebar .feed-option-switch input::after {
+  content: ""; position: absolute; width: 16px; height: 16px; top: 2px; left: 2px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35);
+  transition: transform .15s ease;
+}
+#sidebar .feed-option-switch input:checked { background: #228be6; }
+#sidebar .feed-option-switch input:checked::after { transform: translateX(14px); }
+#sidebar .feed-option-switch input:focus-visible { outline: 2px solid #74c0fc; outline-offset: 2px; }
 
 #sidebar .btn-row { display: flex; gap: 6px; }
 #sidebar .btn-row button { flex: 1; background: #2c2e33; border-color: #373a40; color: #c1c2c5; font-weight: 400; }
