@@ -31,6 +31,8 @@ const DEFAULT_SETTINGS = {
 };
 const API_KEY_SESSION = "apiKey";
 const API_KEY_LOCAL = "apiKey";
+const API_KEY_PAGE_SESSION = "cmhApiKey";
+let volatileSessionApiKey = "";
 
 const DEFAULT_FEED = {
   name: "My hub",
@@ -73,6 +75,59 @@ const DENSITIES = new Set(["comfortable", "compact"]);
 
 function boundedText(value, max, fallback = "") {
   return typeof value === "string" ? value.trim().slice(0, max) || fallback : fallback;
+}
+
+function browserSessionStorageArea() {
+  const area = chrome.storage?.session;
+  return area && typeof area.get === "function"
+    && typeof area.set === "function" && typeof area.remove === "function"
+    ? area : null;
+}
+
+function readPageSessionApiKey() {
+  try {
+    return boundedText(globalThis.sessionStorage?.getItem(API_KEY_PAGE_SESSION), 500);
+  } catch {
+    return volatileSessionApiKey;
+  }
+}
+
+async function readSessionApiKey() {
+  const area = browserSessionStorageArea();
+  if (area) {
+    const stored = await area.get(API_KEY_SESSION);
+    return boundedText(stored[API_KEY_SESSION], 500);
+  }
+  return readPageSessionApiKey() || volatileSessionApiKey;
+}
+
+async function writeSessionApiKey(value) {
+  const apiKey = boundedText(value, 500);
+  const area = browserSessionStorageArea();
+  if (area) {
+    await area.set({ [API_KEY_SESSION]: apiKey });
+    return;
+  }
+  volatileSessionApiKey = apiKey;
+  try {
+    globalThis.sessionStorage?.setItem(API_KEY_PAGE_SESSION, apiKey);
+  } catch {
+    // Background contexts have no sessionStorage; their module memory remains volatile.
+  }
+}
+
+async function removeSessionApiKey() {
+  const area = browserSessionStorageArea();
+  if (area) {
+    await area.remove(API_KEY_SESSION);
+    return;
+  }
+  volatileSessionApiKey = "";
+  try {
+    globalThis.sessionStorage?.removeItem(API_KEY_PAGE_SESSION);
+  } catch {
+    // Background contexts have no sessionStorage; clearing module memory is enough.
+  }
 }
 
 function sanitizedHubName(value) {
@@ -261,16 +316,16 @@ export async function loadConfig() {
   const stored = await chrome.storage.local.get([
     "settings", "feeds", "activeFeedId", "defaultFeedId", "feed", API_KEY_LOCAL,
   ]);
-  const session = await chrome.storage.session.get(API_KEY_SESSION);
+  const sessionApiKey = await readSessionApiKey();
   const legacyApiKey = boundedText(stored.settings?.apiKey, 500);
   const localApiKey = boundedText(stored[API_KEY_LOCAL] || legacyApiKey, 500);
-  const apiKey = boundedText(localApiKey || session[API_KEY_SESSION], 500);
+  const apiKey = boundedText(localApiKey || sessionApiKey, 500);
   if (legacyApiKey && !stored[API_KEY_LOCAL]) {
     await chrome.storage.local.set({ [API_KEY_LOCAL]: legacyApiKey });
   }
   if (legacyApiKey) {
     // Preserve the legacy persistence choice while moving the secret out of settings.
-    if (!session[API_KEY_SESSION]) await chrome.storage.session.set({ [API_KEY_SESSION]: legacyApiKey });
+    if (!sessionApiKey) await writeSessionApiKey(legacyApiKey);
     const settings = { ...(stored.settings || {}) };
     delete settings.apiKey;
     settings.rememberApiKey = true;
@@ -309,12 +364,12 @@ export async function saveConfig(config) {
   const rememberApiKey = config.settings?.rememberApiKey === true;
   await chrome.storage.local.set(persistentConfig(config));
   if (apiKey) {
-    await chrome.storage.session.set({ [API_KEY_SESSION]: apiKey });
+    await writeSessionApiKey(apiKey);
     if (rememberApiKey) await chrome.storage.local.set({ [API_KEY_LOCAL]: apiKey });
     else await chrome.storage.local.remove(API_KEY_LOCAL);
   } else {
     await chrome.storage.local.remove(API_KEY_LOCAL);
-    await chrome.storage.session.remove(API_KEY_SESSION);
+    await removeSessionApiKey();
   }
   await chrome.storage.local.remove("feed"); // old single-feed key
 }

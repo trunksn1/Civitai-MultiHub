@@ -15,6 +15,11 @@
       </div>
     </div>
     <p id="browsing-note" class="hint browsing-note"></p>
+    <div id="startup-error" class="startup-error" role="alert" hidden>
+      <strong>MultiHub could not finish starting.</strong>
+      <span>Reload Civitai and try again.</span>
+      <small id="startup-error-detail"></small>
+    </div>
 
     <section>
       <h2>Hub</h2>
@@ -288,6 +293,27 @@
       <div class="settings-content"><p id="collection-picker-status" class="hint"></p><div id="collection-picker-list"></div></div>
       <footer class="dialog-actions"><button id="collection-picker-save" type="button">Save</button></footer>
     </section>
+  </div>
+
+  <div id="app-dialog-overlay" class="settings-overlay app-dialog-overlay" hidden>
+    <form id="app-dialog" class="settings-dialog app-dialog" role="dialog" aria-modal="true"
+          aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message">
+      <header class="settings-header">
+        <div><h2 id="app-dialog-title"></h2></div>
+      </header>
+      <div class="settings-content app-dialog-content">
+        <p id="app-dialog-message" class="app-dialog-message"></p>
+        <label id="app-dialog-input-label" hidden>
+          <span id="app-dialog-input-caption"></span>
+          <input id="app-dialog-input" type="text" autocomplete="off" />
+        </label>
+        <div id="app-dialog-choices" class="app-dialog-choices" hidden></div>
+      </div>
+      <footer class="dialog-actions">
+        <button id="app-dialog-cancel" type="button" class="secondary">Cancel</button>
+        <button id="app-dialog-confirm" type="submit">OK</button>
+      </footer>
+    </form>
   </div>
 
   <script type="module" src="feed.js"></script>

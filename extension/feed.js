@@ -18,6 +18,7 @@ import {
   MAX_HUBS,
 } from "./storage.js";
 import {
+  DISTRIBUTION,
   ALLOWED_CIVITAI_HOSTS,
   isAllowedCivitaiHost,
 } from "./distribution.js";
@@ -32,6 +33,7 @@ const pageParams = new URLSearchParams(location.search);
 const requestedHost = pageParams.get("embedded") === "1" ? pageParams.get("host") : null;
 const embeddedHost = isAllowedCivitaiHost(requestedHost)
   ? requestedHost : null;
+const USE_IN_PAGE_DIALOGS = DISTRIBUTION.channel === "firefox-addons";
 const BASE_MODEL_LINKS = {
   OpenAI: {
     label: "ChatGPT Images 2.0",
@@ -77,6 +79,155 @@ const pendingReactionActions = new Set();
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
+let appDialogState = null;
+
+function closeAppDialog(value) {
+  if (!appDialogState) return;
+  const { resolve, previousFocus } = appDialogState;
+  appDialogState = null;
+  $("app-dialog-overlay").hidden = true;
+  $("app-dialog-choices").replaceChildren();
+  if (previousFocus?.isConnected) previousFocus.focus();
+  resolve(value);
+}
+
+function openAppDialog({
+  mode = "notice",
+  title,
+  message = "",
+  defaultValue = "",
+  inputLabel = "Value",
+  maxLength = 1000,
+  choices = [],
+  confirmLabel = "OK",
+  cancelLabel = "Cancel",
+}) {
+  if (appDialogState) closeAppDialog(null);
+
+  return new Promise((resolve) => {
+    const overlay = $("app-dialog-overlay");
+    const inputWrap = $("app-dialog-input-label");
+    const input = $("app-dialog-input");
+    const choiceList = $("app-dialog-choices");
+    const confirmButton = $("app-dialog-confirm");
+    const cancelButton = $("app-dialog-cancel");
+    const canCancel = mode !== "notice";
+
+    appDialogState = {
+      mode,
+      resolve,
+      cancelValue: mode === "confirmation" ? false : null,
+      previousFocus: document.activeElement,
+    };
+    $("app-dialog-title").textContent = title;
+    $("app-dialog-message").textContent = message;
+    $("app-dialog-input-caption").textContent = inputLabel;
+    inputWrap.hidden = mode !== "text";
+    input.value = String(defaultValue ?? "");
+    input.maxLength = maxLength;
+    input.required = false;
+    choiceList.hidden = mode !== "choice";
+    choiceList.replaceChildren();
+    if (mode === "choice") {
+      for (const choice of choices) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "app-dialog-choice";
+        button.textContent = choice.label;
+        button.addEventListener("click", () => closeAppDialog(choice.value));
+        choiceList.append(button);
+      }
+    }
+    confirmButton.hidden = mode === "choice";
+    confirmButton.textContent = confirmLabel;
+    cancelButton.hidden = !canCancel;
+    cancelButton.textContent = cancelLabel;
+    overlay.hidden = false;
+    requestAnimationFrame(() => {
+      if (mode === "text") {
+        input.focus();
+        input.select();
+      } else if (mode === "choice") {
+        choiceList.querySelector("button")?.focus();
+      } else {
+        confirmButton.focus();
+      }
+    });
+  });
+}
+
+function askText(title, message, defaultValue = "", options = {}) {
+  const { nativeMessage = message, ...dialogOptions } = options;
+  if (!USE_IN_PAGE_DIALOGS) return Promise.resolve(globalThis.prompt(nativeMessage, defaultValue));
+  return openAppDialog({ mode: "text", title, message, defaultValue, ...dialogOptions });
+}
+
+function askConfirmation(title, message, options = {}) {
+  if (!USE_IN_PAGE_DIALOGS) return Promise.resolve(globalThis.confirm(message));
+  return openAppDialog({ mode: "confirmation", title, message, confirmLabel: "Confirm", ...options });
+}
+
+function showNotice(title, message, options = {}) {
+  if (!USE_IN_PAGE_DIALOGS) {
+    globalThis.alert(message);
+    return Promise.resolve();
+  }
+  return openAppDialog({ mode: "notice", title, message, ...options });
+}
+
+function chooseFromList(title, message, choices, options = {}) {
+  if (!USE_IN_PAGE_DIALOGS) {
+    const answer = globalThis.prompt(options.nativeMessage || message, "1");
+    const index = Number(answer) - 1;
+    return Promise.resolve(Number.isInteger(index) ? choices[index]?.value || null : null);
+  }
+  return openAppDialog({ mode: "choice", title, message, choices });
+}
+
+function bindAppDialog() {
+  $("app-dialog").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!appDialogState) return;
+    closeAppDialog(appDialogState.mode === "text" ? $("app-dialog-input").value : true);
+  });
+  $("app-dialog-cancel").addEventListener("click", () => {
+    if (appDialogState) closeAppDialog(appDialogState.cancelValue);
+  });
+  $("app-dialog-overlay").addEventListener("click", (event) => {
+    if (event.target === $("app-dialog-overlay") && appDialogState?.mode !== "notice") {
+      closeAppDialog(appDialogState.cancelValue);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!appDialogState) return;
+    if (event.key === "Escape" && appDialogState.mode !== "notice") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeAppDialog(appDialogState.cancelValue);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...$("app-dialog").querySelectorAll(
+      'button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden])'
+    )].filter((element) => !element.closest("[hidden]"));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }, true);
+}
+
+function showStartupError(error) {
+  $("startup-error-detail").textContent = String(error?.message || error || "Unknown startup error").slice(0, 240);
+  $("startup-error").hidden = false;
+  console.error("MultiHub startup failed", error);
+}
 
 for (const option of [...$("link-domain").options]) {
   if (!ALLOWED_CIVITAI_HOSTS.has(option.value)) option.remove();
@@ -762,7 +913,11 @@ function renderSources() {
     remove.className = "remove";
     remove.textContent = "✕";
     remove.addEventListener("click", async () => {
-      if (!confirm(`Remove "${sourceLabel(source)}" from this hub?`)) return;
+      if (!await askConfirmation(
+        "Remove source?",
+        `Remove "${sourceLabel(source)}" from this hub?`,
+        { confirmLabel: "Remove" }
+      )) return;
       feed().sources = feed().sources.filter((s) => s.id !== source.id);
       await saveConfig(config);
       renderHubs();
@@ -789,18 +944,18 @@ function updateBulkControls() {
     || selectedSourceIds.size === feed().sources.length;
 }
 
-function chooseDestination(action) {
+async function chooseDestination(action) {
   const choices = config.feeds.filter((f) => f.id !== feed().id);
   if (choices.length === 0) {
-    alert("Create another hub first.");
+    await showNotice("No destination hub", "Create another hub first.");
     return null;
   }
-  const answer = prompt(
-    `${action} to which hub?\n${choices.map((f, i) => `${i + 1}. ${f.name}`).join("\n")}`,
-    "1"
+  return chooseFromList(
+    `${action} sources`,
+    `${action} the selected sources to which hub?`,
+    choices.map((hub) => ({ label: hub.name, value: hub })),
+    { nativeMessage: `${action} to which hub?\n${choices.map((f, i) => `${i + 1}. ${f.name}`).join("\n")}` }
   );
-  const index = Number(answer) - 1;
-  return Number.isInteger(index) ? choices[index] || null : null;
 }
 
 function copySourceTo(source, destination) {
@@ -1387,7 +1542,11 @@ function makeCard(item) {
     hideCreator.textContent = "Hide creator";
     hideCreator.title = `Hide @${item.username} in every hub`;
     hideCreator.addEventListener("click", async () => {
-      if (!confirm(`Hide all work by @${item.username} in all hubs?`)) return;
+      if (!await askConfirmation(
+        "Hide creator?",
+        `Hide all work by @${item.username} in all hubs?`,
+        { confirmLabel: "Hide creator" }
+      )) return;
       config.settings.hiddenCreators = [...new Set([
         ...config.settings.hiddenCreators, item.username.toLocaleLowerCase(),
       ])].slice(0, 200);
@@ -2518,9 +2677,27 @@ function bindHubs() {
   $("hub-select").addEventListener("change", (e) => switchHub(e.target.value));
 
   $("hub-new").addEventListener("click", async () => {
-    const name = prompt("Name for the new hub:", `Hub ${config.feeds.length + 1}`);
-    if (!name) return;
-    const f = makeFeed(name.trim());
+    if (config.feeds.length >= MAX_HUBS) {
+      await showNotice("Hub limit reached", `MultiHub supports at most ${MAX_HUBS} hubs.`);
+      return;
+    }
+    const name = await askText(
+      "Create a new hub",
+      "Choose a name for this hub.",
+      `Hub ${config.feeds.length + 1}`,
+      {
+        inputLabel: "Hub name", maxLength: 30, confirmLabel: "Create hub",
+        nativeMessage: "Name for the new hub:",
+      }
+    );
+    if (name === null) return;
+    let f;
+    try {
+      f = makeFeed(name);
+    } catch (error) {
+      await showNotice("Could not create hub", error.message);
+      return;
+    }
     config.feeds.push(f);
     await switchHub(f.id);
   });
@@ -2534,9 +2711,23 @@ function bindHubs() {
       $("hub-manager-status").textContent = `MultiHub supports at most ${MAX_HUBS} hubs.`;
       return;
     }
-    const name = prompt("Name for the new hub:", `Hub ${config.feeds.length + 1}`);
-    if (!name) return;
-    const hub = makeFeed(name);
+    const name = await askText(
+      "Create a new hub",
+      "Choose a name for this hub.",
+      `Hub ${config.feeds.length + 1}`,
+      {
+        inputLabel: "Hub name", maxLength: 30, confirmLabel: "Create hub",
+        nativeMessage: "Name for the new hub:",
+      }
+    );
+    if (name === null) return;
+    let hub;
+    try {
+      hub = makeFeed(name);
+    } catch (error) {
+      $("hub-manager-status").textContent = error.message;
+      return;
+    }
     config.feeds.push(hub);
     await switchHub(hub.id);
     renderHubManager();
@@ -2545,8 +2736,16 @@ function bindHubs() {
     if (selectedHubIds.size !== 1) return;
     const hub = config.feeds.find((candidate) => selectedHubIds.has(candidate.id));
     if (!hub) return;
-    const name = prompt("New name for this hub:", hub.name);
-    if (!name) return;
+    const name = await askText(
+      "Rename hub",
+      `Choose a new name for “${hub.name}”.`,
+      hub.name,
+      {
+        inputLabel: "Hub name", maxLength: 30, confirmLabel: "Rename",
+        nativeMessage: "New name for this hub:",
+      }
+    );
+    if (name === null) return;
     try {
       hub.name = normalizeNewHubName(name);
     } catch (error) {
@@ -2564,7 +2763,11 @@ function bindHubs() {
   $("hub-manager-delete").addEventListener("click", async () => {
     const selected = config.feeds.filter((hub) => selectedHubIds.has(hub.id));
     if (selected.length === 0) return;
-    if (!confirm(`Delete ${selected.length} selected hub${selected.length === 1 ? "" : "s"} and all of their sources?`)) return;
+    if (!await askConfirmation(
+      "Delete selected hubs?",
+      `Delete ${selected.length} selected hub${selected.length === 1 ? "" : "s"} and all of their sources?`,
+      { confirmLabel: "Delete" }
+    )) return;
     const removedIds = new Set(selected.map((hub) => hub.id));
     config.feeds = config.feeds.filter((hub) => !removedIds.has(hub.id));
     if (config.feeds.length === 0) config.feeds.push(makeFeed("My hub"));
@@ -2638,7 +2841,11 @@ function bindSettings() {
     applyLocalFilters();
   });
   $("clear-viewed").addEventListener("click", async () => {
-    if (!confirm("Clear viewed-image history for this hub?")) return;
+    if (!await askConfirmation(
+      "Clear viewed history?",
+      "Clear viewed-image history for this hub?",
+      { confirmLabel: "Clear history" }
+    )) return;
     feed().viewedIds = [];
     viewedIdSet = new Set();
     await saveConfig(config);
@@ -2703,9 +2910,14 @@ function bindAddSource() {
         const model = await resolveModel(draft.modelId, config.settings);
         draft.label = `${model.type === "LORA" ? "LoRA" : model.type}: ${model.name}`;
         const versionHelp = model.versions.map((version) => `${version.id}: ${version.name}`).join("\n");
-        const versions = prompt(
-          `Choose model versions now. Enter comma-separated IDs or "all":\n${versionHelp}`,
-          draft.versionIds?.join(", ") || "all"
+        const versions = await askText(
+          "Choose model versions",
+          `Enter comma-separated version IDs or “all”.\n\n${versionHelp}`,
+          draft.versionIds?.join(", ") || "all",
+          {
+            inputLabel: "Version IDs", maxLength: 1000, confirmLabel: "Use versions",
+            nativeMessage: `Choose model versions now. Enter comma-separated IDs or "all":\n${versionHelp}`,
+          }
         );
         if (versions === null) return;
         if (versions.trim().toLocaleLowerCase() === "all" || !versions.trim()) delete draft.versionIds;
@@ -2839,7 +3051,7 @@ function bindPanels() {
 function bindBulkSources() {
   async function transferSelected(move) {
     if (selectedSourceIds.size === 0) return;
-    const destination = chooseDestination(move ? "Move" : "Copy");
+    const destination = await chooseDestination(move ? "Move" : "Copy");
     if (!destination) return;
     const selected = feed().sources.filter((source) => selectedSourceIds.has(source.id));
     for (const source of selected) copySourceTo(source, destination);
@@ -2874,7 +3086,11 @@ function bindBulkSources() {
   $("bulk-move").addEventListener("click", () => transferSelected(true));
   $("bulk-remove").addEventListener("click", async () => {
     const count = selectedSourceIds.size;
-    if (!count || !confirm(`Remove ${count} selected source${count === 1 ? "" : "s"} from this hub?`)) return;
+    if (!count || !await askConfirmation(
+      "Remove selected sources?",
+      `Remove ${count} selected source${count === 1 ? "" : "s"} from this hub?`,
+      { confirmLabel: "Remove" }
+    )) return;
     feed().sources = feed().sources.filter((source) => !selectedSourceIds.has(source.id));
     selectedSourceIds = new Set();
     await saveConfig(config);
@@ -3076,27 +3292,36 @@ function bindSourceEditor() {
 }
 
 (async function init() {
-  config = await loadConfig();
-  if (config.defaultFeedId && config.feeds.some((hub) => hub.id === config.defaultFeedId)) {
-    config.activeFeedId = config.defaultFeedId;
+  try {
+    bindAppDialog();
+    config = await loadConfig();
+    if (config.defaultFeedId && config.feeds.some((hub) => hub.id === config.defaultFeedId)) {
+      config.activeFeedId = config.defaultFeedId;
+    }
+
+    // Render stored state before binding the rest of the UI. If a later setup
+    // step fails, Firefox users still see their hubs and a useful startup error
+    // instead of an unexplained blank selector.
+    renderHubs();
+    renderSources();
+    await saveConfig(config); // persist migration to the multi-hub format
+    bindHubs();
+    bindPanels();
+    bindLightbox();
+    bindSourceEditor();
+    bindSettings();
+    bindAddSource();
+    bindBulkSources();
+    bindShare();
+    startFeed();
+    // Best-effort and asynchronous: the feed starts on the stored levels and
+    // restarts only if Civitai reports a different maturity setting.
+    syncBrowsingLevelsFromCivitai().then((changed) => {
+      renderBrowsingLevelNote();
+      if (changed) startFeed();
+      watchCivitaiBrowsingLevel();
+    }).catch((error) => console.warn("Could not sync Civitai browsing levels", error));
+  } catch (error) {
+    showStartupError(error);
   }
-  await saveConfig(config); // persist migration to the multi-hub format
-  bindHubs();
-  bindPanels();
-  bindLightbox();
-  bindSourceEditor();
-  bindSettings();
-  bindAddSource();
-  bindBulkSources();
-  bindShare();
-  renderHubs();
-  renderSources();
-  startFeed();
-  // Best-effort and asynchronous: the feed starts on the stored levels and
-  // restarts only if Civitai reports a different maturity setting.
-  syncBrowsingLevelsFromCivitai().then((changed) => {
-    renderBrowsingLevelNote();
-    if (changed) startFeed();
-    watchCivitaiBrowsingLevel();
-  });
 })();

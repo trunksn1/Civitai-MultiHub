@@ -11,7 +11,7 @@ know you do not want to miss.
 
 > **Browser installation:** [install MultiHub from the Chrome Web Store](https://chromewebstore.google.com/detail/multihub-for-civitai-unof/nojkmfegfgplbclepjlnkmdcmngeahbj)
 > or [install MultiHub from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/civitai-multihub-unofficial/).
-> Store installations update automatically. Version `0.12.4` is the current GitHub release;
+> Store installations update automatically. Version `0.12.5` is the current GitHub release;
 > marketplace availability can lag while browser-store reviews are in progress.
 
 This repository is the auditable open-source implementation of the extension. It lets users and
@@ -76,9 +76,8 @@ Existing users may be asked to approve the added `civitai.red` site access.
 3. Refresh any `civitai.com` or `civitai.red` tab that was already open.
 4. Optionally pin MultiHub to the Firefox toolbar. Its toolbar icon opens the standalone feed.
 
-Firefox updates the add-on automatically. The `0.12.4` package requests access to both Civitai
-domains; the previously installed package remains limited to `civitai.com` until the update is
-approved. Existing users may be asked to approve the added `civitai.red` site access.
+Firefox updates the add-on automatically. The `0.12.5` package requests access to both Civitai
+domains. Existing users who have not yet approved `civitai.red` site access may be asked to do so.
 
 ## Manual installation for development or security review
 
@@ -88,13 +87,13 @@ folder that contains `manifest.json` directly. Manually installed copies do not 
 ### Install a signed release asset manually
 
 Take the newest entry on the
-[Releases page](https://github.com/trunksn1/Civitai-MultiHub/releases), currently `v0.12.4`. Every
+[Releases page](https://github.com/trunksn1/Civitai-MultiHub/releases), currently `v0.12.5`. Every
 release from `v0.9.0` on carries its packages under **Assets**; older versions remain published so
 an installation can be pinned or rolled back.
 
-1. Under the `v0.12.4` release, download `civitai-multihub-full-v0.12.4.zip` and its `.sha256` file.
+1. Under the `v0.12.5` release, download `civitai-multihub-full-v0.12.5.zip` and its `.sha256` file.
    Make sure the ZIP is an asset on the **Releases** page, not GitHub's automatic source archive.
-   All `0.12.4` package variants include both Civitai domains.
+   All `0.12.5` package variants include both Civitai domains.
 2. Extract the ZIP to a permanent folder. Open it and confirm that `manifest.json` is directly
    inside that folder.
 3. Open `chrome://extensions` and enable **Developer mode**.

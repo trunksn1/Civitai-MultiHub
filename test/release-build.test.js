@@ -146,6 +146,30 @@ test("source UI keeps the corrected hub picker and preview contracts", async () 
   assert.match(feedScript, /Add @\$\{profileUsername\} to a hub/);
 });
 
+test("Firefox embedded feed interactions stay inside the extension page", async () => {
+  const [feedHtml, feedScript, feedCss] = await Promise.all([
+    readFile(new URL("../extension/feed.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/feed.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/feed.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(feedScript, /USE_IN_PAGE_DIALOGS = DISTRIBUTION\.channel === "firefox-addons"/);
+  assert.match(feedScript, /if \(!USE_IN_PAGE_DIALOGS\)[\s\S]+globalThis\.prompt/);
+  assert.match(feedScript, /if \(!USE_IN_PAGE_DIALOGS\)[\s\S]+globalThis\.confirm/);
+  assert.match(feedScript, /if \(!USE_IN_PAGE_DIALOGS\) \{\s*globalThis\.alert/);
+  assert.match(feedHtml, /id="app-dialog-overlay"/);
+  assert.match(feedHtml, /id="app-dialog-input"/);
+  assert.match(feedHtml, /id="app-dialog-choices"/);
+  assert.match(feedHtml, /id="startup-error"[^>]+role="alert"/);
+  assert.match(feedScript, /function askText\(/);
+  assert.match(feedScript, /function askConfirmation\(/);
+  assert.match(feedScript, /function chooseFromList\(/);
+  assert.match(feedScript, /const destination = await chooseDestination\(/);
+  assert.match(feedScript, /renderHubs\(\);[\s\S]+await saveConfig\(config\)/);
+  assert.match(feedScript, /catch \(error\) \{\s*showStartupError\(error\)/);
+  assert.match(feedCss, /\.app-dialog-overlay\s*\{[^}]*z-index:\s*2400/);
+});
+
 test("Firefox release uses an MV3 event page and Mozilla signing metadata", async () => {
   const outputRoot = await mkdtemp(join(tmpdir(), "multihub-firefox-release-"));
   try {

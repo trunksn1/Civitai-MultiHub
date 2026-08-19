@@ -159,6 +159,33 @@ test("saveConfig keeps keys session-only unless persistence is explicitly select
   delete globalThis.chrome;
 });
 
+test("Firefox works without storage.session and keeps an unremembered key volatile", async () => {
+  const local = fakeStorageArea();
+  const pageSession = new Map();
+  globalThis.chrome = { storage: { local } };
+  globalThis.sessionStorage = {
+    getItem(key) { return pageSession.get(key) ?? null; },
+    setItem(key, value) { pageSession.set(key, String(value)); },
+    removeItem(key) { pageSession.delete(key); },
+  };
+  const config = normalizeConfig({ feeds: [{ id: "hub", name: "Test", sources: [] }] });
+
+  config.settings.apiKey = "firefox-session-key";
+  await saveConfig(config);
+  assert.equal(local.data.apiKey, undefined);
+  assert.equal(pageSession.get("cmhApiKey"), "firefox-session-key");
+
+  const loaded = await loadConfig();
+  assert.equal(loaded.settings.apiKey, "firefox-session-key");
+  assert.equal(loaded.settings.rememberApiKey, false);
+
+  loaded.settings.apiKey = "";
+  await saveConfig(loaded);
+  assert.equal(pageSession.has("cmhApiKey"), false);
+  delete globalThis.sessionStorage;
+  delete globalThis.chrome;
+});
+
 test("loadConfig preserves an existing persistent-key choice without putting it in settings", async () => {
   const local = fakeStorageArea({
     apiKey: "existing-persistent-key",

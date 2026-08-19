@@ -155,6 +155,14 @@ body.sidebar-collapsed .sidebar-toggle { left: 0; }
 .source-bulk[hidden] { display: none; }
 
 #status { font-size: 12px; color: #909296; min-height: 1em; }
+.startup-error {
+  display: grid; gap: 3px; margin: 0 0 12px; padding: 9px 10px;
+  border: 1px solid #8f4b4b; border-radius: 8px; background: #3b2528;
+  color: #ffc9c9; font-size: 12px; line-height: 1.35;
+}
+.startup-error[hidden] { display: none; }
+.startup-error strong { color: #fff; }
+.startup-error small { color: #ffa8a8; overflow-wrap: anywhere; }
 .error-panel { margin-top: 10px; padding: 8px; border: 1px solid #5c3b3b; border-radius: 8px; background: #302426; font-size: 12px; }
 .error-panel summary { cursor: pointer; color: #ff8787; font-weight: 700; }
 .error-panel ul { padding-left: 18px; max-height: 150px; overflow-y: auto; }
@@ -465,3 +473,37 @@ body.compact .card .info { padding: 6px 8px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid #373a40; }
 #sidebar .dialog-actions button { width: auto; margin: 0; }
 .form-error { color: #ff8787; font-size: 12px; }
+
+/* Browser-native prompt/confirm dialogs are unreliable when an extension page
+   is embedded in Firefox. Keep every interaction inside the extension page. */
+.app-dialog-overlay { z-index: 2400; padding: 14px; }
+.app-dialog { width: min(440px, 100%); }
+.app-dialog-content { display: grid; gap: 14px; }
+.app-dialog-message {
+  margin: 0; color: #dee2e6; font-size: 13px; line-height: 1.45;
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.app-dialog label { display: grid; gap: 6px; color: #adb5bd; font-size: 12px; }
+.app-dialog input {
+  width: 100%; padding: 8px 10px; border: 1px solid #495057; border-radius: 8px;
+  outline: 0; background: #202125; color: #f1f3f5; font: inherit;
+}
+.app-dialog input:focus { border-color: #4dabf7; box-shadow: 0 0 0 2px rgba(77,171,247,.2); }
+.app-dialog-choices { display: grid; gap: 7px; max-height: min(320px, 45vh); overflow-y: auto; }
+.app-dialog-choices[hidden] { display: none; }
+.app-dialog-choice {
+  width: 100%; padding: 9px 11px; border: 1px solid #495057; border-radius: 8px;
+  background: #2c2e33; color: #dee2e6; font: inherit; font-size: 13px;
+  font-weight: 600; text-align: left; cursor: pointer;
+}
+.app-dialog-choice:hover, .app-dialog-choice:focus-visible {
+  border-color: #4dabf7; background: #34373e; color: #fff; outline: 0;
+}
+.app-dialog .dialog-actions button {
+  width: auto; margin: 0; padding: 7px 13px; border: 1px solid #228be6;
+  border-radius: 8px; background: #228be6; color: #fff; font: inherit;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.app-dialog .dialog-actions button.secondary {
+  border-color: #495057; background: #2c2e33; color: #c1c2c5; font-weight: 400;
+}
