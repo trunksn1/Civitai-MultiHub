@@ -4,9 +4,9 @@
 //    Videos, Models, …) by cloning an existing ribbon link so it inherits the
 //    site's own styling. Civitai is a React app, so the ribbon is re-rendered
 //    on navigation — a debounced observer re-injects when the item disappears. If
-//    the ribbon can't be found (site redesign), a floating button is the fallback.
+//    the ribbon can't be found (site redesign), later DOM scans retry the integration.
 // 2. On model/LoRA, creator and collection pages, places an "Add to MultiHub"
-//    button beside the page's own header actions. It always asks which hub to add to.
+//    button under the page's stable native action area. It always asks which hub to add to.
 // 3. Proxies explicitly allowlisted read operations — collections, the browsing
 //    level, image comments and generation data — through the current Civitai
 //    origin. This lets Chrome attach the site's existing session cookies without
@@ -20,7 +20,7 @@
 // Claim the page synchronously so only one variant injects persistent UI. If a stale owner marker
 // remains without any MultiHub UI, this instance safely reclaims it.
 const pageRoot = document.documentElement;
-const existingUi = document.querySelector("#cmh-overlay, #cmh-widget, #cmh-nav-item");
+const existingUi = document.querySelector("#cmh-overlay, #cmh-nav-item");
 if (existingUi) return;
 pageRoot.setAttribute("data-cmh-extension-owner", chrome.runtime.id);
 
@@ -210,7 +210,7 @@ const SITE_POPOVER_SELECTOR = [
 let popoverObserver = null;
 
 function liftSitePopover(element) {
-  if (!(element instanceof Element) || element.closest("#cmh-overlay, #cmh-widget")) return;
+  if (!(element instanceof Element) || element.closest("#cmh-overlay")) return;
   const style = getComputedStyle(element);
   if (style.position === "static" || style.zIndex !== "auto") return;
   element.style.setProperty("z-index", String(SITE_POPOVER_Z_INDEX), "important");
@@ -327,18 +327,7 @@ function ensureNavButton() {
   return true;
 }
 
-// ---------- page add action + floating fallback opener ----------
-
-const widget = document.createElement("div");
-widget.id = "cmh-widget";
-
-const openBtn = document.createElement("button");
-openBtn.className = "cmh-btn";
-openBtn.type = "button";
-openBtn.textContent = "MultiHub";
-openBtn.title = "Open your MultiHub for Civitai feed";
-openBtn.hidden = true; // only shown if ribbon injection fails
-openBtn.addEventListener("click", () => chrome.runtime.sendMessage({ type: "open-feed" }));
+// ---------- page add action ----------
 
 const addBtn = document.createElement("button");
 addBtn.className = "cmh-btn cmh-add";
@@ -354,8 +343,6 @@ hubMenu.className = "cmh-menu cmh-page-menu";
 hubMenu.hidden = true;
 
 pageAction.append(hubMenu, addBtn);
-widget.append(openBtn);
-document.documentElement.append(widget);
 
 async function onAddClick(event) {
   event.preventDefault();
@@ -652,7 +639,9 @@ function isVisibleElement(element) {
 }
 
 function clearPageActionPlacement() {
-  pageActionHost?.classList.remove("cmh-page-action-host", "cmh-model-action-host");
+  pageActionHost?.classList.remove(
+    "cmh-page-action-host", "cmh-model-action-anchor", "cmh-creator-action-anchor"
+  );
   pageActionHost = null;
   delete pageAction.dataset.cmhPlacement;
   pageAction.remove();
@@ -705,65 +694,128 @@ function controlLabel(element) {
     .filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function findModelHeaderActionGroup() {
-  const heading = [...document.querySelectorAll("h1")].find(isVisibleElement);
-  if (!heading) return null;
-  const headingRect = heading.getBoundingClientRect();
-  const controls = [...document.querySelectorAll('button, a, [role="button"]')]
-    .filter((element) => {
-      if (!isVisibleElement(element) || element.closest("#cmh-page-action")) return false;
-      const rect = element.getBoundingClientRect();
-      const sameHeaderRow = rect.bottom >= headingRect.top - 16
-        && rect.top <= headingRect.bottom + 20;
-      return sameHeaderRow && rect.left > headingRect.right + 8;
-    });
-  const info = controls.find((element) => /\b(?:info|information|model details)\b/i.test(controlLabel(element)))
-    || controls.filter((element) => {
-      const rect = element.getBoundingClientRect();
-      return !String(element.textContent || "").trim() && element.querySelector("svg")
-        && rect.width <= 56 && rect.height <= 56;
-    }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0];
-  if (!info) return null;
-
-  let group = info;
-  for (let node = info.parentElement, depth = 0; node && depth < 4; node = node.parentElement, depth += 1) {
+function closestSingleControlBlock(control) {
+  const controlRect = control.getBoundingClientRect();
+  let block = control;
+  for (let node = control.parentElement, depth = 0; node && depth < 4; node = node.parentElement, depth += 1) {
+    if (node === document.body || node === document.documentElement) break;
     const rect = node.getBoundingClientRect();
-    if (rect.width > 280 || rect.height > 72) break;
-    const containedControls = [...node.querySelectorAll('button, a, [role="button"]')]
+    const controls = [...node.querySelectorAll('button, a, [role="button"]')]
       .filter(isVisibleElement);
-    if (containedControls.length >= 2) group = node;
+    if (controls.length !== 1 || rect.height > controlRect.height + 20
+        || Math.abs(rect.width - controlRect.width) > 32) break;
+    block = node;
   }
-  return group;
+  return block;
 }
 
-function findModelSidebarActionRow() {
-  const heading = [...document.querySelectorAll("h1")].find(isVisibleElement);
-  if (!heading) return null;
-  const headingRect = heading.getBoundingClientRect();
-  const candidates = [...document.querySelectorAll("div, section")].map((element) => {
-    if (!isVisibleElement(element) || element.closest("#cmh-page-action")) return null;
-    const rect = element.getBoundingClientRect();
-    if (rect.top < headingRect.bottom + 60 || rect.left < innerWidth * 0.45
-        || rect.width < 220 || rect.width > 520 || rect.height < 36 || rect.height > 90) return null;
-    const controls = [...element.querySelectorAll('button, a, [role="button"]')]
-      .filter(isVisibleElement);
-    if (controls.length < 5 || controls.length > 10) return null;
-    return { element, rect, controls };
-  }).filter(Boolean);
-  candidates.sort((a, b) =>
-    Math.abs(a.controls.length - 7) - Math.abs(b.controls.length - 7)
-      || a.rect.height - b.rect.height || a.rect.top - b.rect.top
+function findCreatorLastActionAnchor() {
+  const follow = findCreatorFollowControl();
+  const followRect = follow?.getBoundingClientRect();
+  const anchors = [...new Set(
+    [...document.querySelectorAll('button, a, [role="button"]')]
+      .filter((element) => isVisibleElement(element)
+        && !element.closest("#cmh-page-action")
+        && /\b(?:tip|chat|visit\s+shop)\b/i.test(controlLabel(element)))
+      .map(closestSingleControlBlock)
+  )];
+  const minimumActionWidth = Math.min(140, innerWidth * 0.35);
+  const substantial = anchors.filter((anchor) =>
+    anchor.getBoundingClientRect().width >= minimumActionWidth
   );
-  return candidates[0]?.element || null;
+  const candidates = substantial.length ? substantial : anchors;
+  const nearby = followRect ? candidates.filter((anchor) => {
+    const rect = anchor.getBoundingClientRect();
+    const overlap = Math.min(rect.right, followRect.right) - Math.max(rect.left, followRect.left);
+    return rect.top >= followRect.top && rect.top - followRect.bottom < 600
+      && overlap >= Math.min(rect.width, followRect.width) * 0.4;
+  }) : candidates;
+  return (nearby.length ? nearby : candidates).sort((a, b) => {
+    const aRect = a.getBoundingClientRect();
+    const bRect = b.getBoundingClientRect();
+    return bRect.bottom - aRect.bottom || bRect.width - aRect.width;
+  })[0] || null;
+}
+
+function findModelCreateActionCard() {
+  const candidates = [...document.querySelectorAll('button, a, [role="button"]')]
+    .filter((element) => isVisibleElement(element)
+      && !element.closest("#cmh-page-action")
+      && /\bcreate\b/i.test(controlLabel(element)))
+    .map((create) => {
+      const createRect = create.getBoundingClientRect();
+      const matches = [];
+      for (let element = create.parentElement, depth = 0;
+        element && depth < 8;
+        element = element.parentElement, depth += 1) {
+        if (element === document.body || element === document.documentElement) break;
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 180 || rect.width > 620 || rect.height < 80 || rect.height > 260) continue;
+        const controls = [...element.querySelectorAll('button, a, [role="button"]')]
+          .filter(isVisibleElement);
+        if (controls.length < 5 || controls.length > 12
+            || createRect.width < rect.width * 0.55
+            || rect.height < createRect.height + 28) continue;
+        const score = (element.hasAttribute("data-with-border") ? 100 : 0)
+          + createRect.width / rect.width * 20 - Math.abs(controls.length - 7) * 3;
+        matches.push({ element, score, top: rect.top });
+      }
+      return matches.sort((a, b) => b.score - a.score)[0] || null;
+    }).filter(Boolean);
+  const bestByElement = new Map();
+  for (const candidate of candidates) {
+    const existing = bestByElement.get(candidate.element);
+    if (!existing || candidate.score > existing.score) bestByElement.set(candidate.element, candidate);
+  }
+  return [...bestByElement.values()]
+    .sort((a, b) => b.score - a.score || a.top - b.top)[0]?.element || null;
+}
+
+function findCompactModelActionCard() {
+  const candidates = [...document.querySelectorAll('[data-with-border="true"]')]
+    .filter((element) => isVisibleElement(element) && !element.closest("#cmh-page-action"))
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 180 || rect.width > 620 || rect.height < 45 || rect.height > 160) {
+        return null;
+      }
+      const controls = [...element.querySelectorAll('button, a, [role="button"]')]
+        .filter((control) => isVisibleElement(control)
+          && !control.closest("#cmh-page-action")
+          && control.closest('[data-with-border="true"]') === element);
+      if (controls.length < 5 || controls.length > 12) return null;
+      const controlRects = controls.map((control) => control.getBoundingClientRect());
+      const topSpread = Math.max(...controlRects.map((controlRect) => controlRect.top))
+        - Math.min(...controlRects.map((controlRect) => controlRect.top));
+      const left = Math.min(...controlRects.map((controlRect) => controlRect.left));
+      const right = Math.max(...controlRects.map((controlRect) => controlRect.right));
+      const maximumHeight = Math.max(...controlRects.map((controlRect) => controlRect.height));
+      if (topSpread > 24 || right - left < rect.width * 0.55
+          || maximumHeight > Math.min(64, rect.height * 0.9)) return null;
+      return {
+        element,
+        score: 100 - Math.abs(controls.length - 7) * 8
+          + (right - left) / rect.width * 20 - rect.height / 20,
+        top: rect.top,
+      };
+    })
+    .filter(Boolean);
+  return candidates.sort((a, b) => b.score - a.score || a.top - b.top)[0]?.element || null;
+}
+
+function findModelActionCard() {
+  return findModelCreateActionCard() || findCompactModelActionCard();
 }
 
 function placePageAction(source) {
   clearPageActionPlacement();
 
   if (source.type === "user") {
-    const follow = findCreatorFollowControl();
-    if (!follow?.parentElement) return false;
-    follow.insertAdjacentElement("beforebegin", pageAction);
+    const lastActionAnchor = findCreatorLastActionAnchor();
+    if (!lastActionAnchor?.parentElement) return false;
+    pageActionHost = lastActionAnchor;
+    pageActionHost.classList.add("cmh-creator-action-anchor");
+    lastActionAnchor.insertAdjacentElement("afterend", pageAction);
     pageAction.dataset.cmhPlacement = "creator";
     return true;
   }
@@ -780,21 +832,35 @@ function placePageAction(source) {
   }
 
   if (source.type === "model") {
-    const actionRow = findModelSidebarActionRow();
-    if (actionRow) {
-      pageActionHost = actionRow;
-      pageActionHost.classList.add("cmh-model-action-host");
-      pageActionHost.append(pageAction);
-    } else {
-      const actionGroup = findModelHeaderActionGroup();
-      if (!actionGroup?.parentElement) return false;
-      actionGroup.insertAdjacentElement("beforebegin", pageAction);
-    }
+    const actionCard = findModelActionCard();
+    if (!actionCard?.parentElement) return false;
+    pageActionHost = actionCard;
+    pageActionHost.classList.add("cmh-model-action-anchor");
+    actionCard.append(pageAction);
     pageAction.dataset.cmhPlacement = "model";
     return true;
   }
 
   return false;
+}
+
+function pageActionPlacementIsCurrent(source) {
+  if (!source || !pageAction.isConnected || pageAction.dataset.cmhPlacement !== (
+    source.type === "user" ? "creator" : source.type
+  )) return false;
+  if (source.type === "user") {
+    const lastActionAnchor = findCreatorLastActionAnchor();
+    return Boolean(lastActionAnchor && lastActionAnchor === pageActionHost
+      && lastActionAnchor.nextElementSibling === pageAction);
+  }
+  if (source.type === "model") {
+    const actionCard = findModelActionCard();
+    return Boolean(actionCard && actionCard === pageActionHost
+      && pageAction.parentElement === actionCard);
+  }
+  return source.type === "collection"
+    && pageActionHost?.isConnected
+    && pageAction.parentElement === pageActionHost;
 }
 
 function updateWidget() {
@@ -1127,7 +1193,7 @@ function activateRequestedRemix() {
   const requested = new URLSearchParams(location.search).get("cmh-remix") === "1";
   if (!requested || remixActivationStarted || !/^\/images\/\d+/.test(location.pathname)) return;
   const control = [...document.querySelectorAll('button, a, [role="button"]')].find((element) => {
-    if (!isVisibleElement(element) || element.closest("#cmh-widget, #cmh-page-action, #cmh-overlay")) return false;
+    if (!isVisibleElement(element) || element.closest("#cmh-page-action, #cmh-overlay")) return false;
     const label = `${element.textContent || ""} ${element.getAttribute("aria-label") || ""}`.trim();
     return /^remix\b/i.test(label);
   });
@@ -1253,6 +1319,19 @@ async function handleAccountRequest(message) {
     const imageId = positiveId(message.imageId);
     if (!imageId) return { ok: false, code: "invalid-request" };
     ({ procedure, request } = prepareTrpcGet("image.getGenerationData", { id: imageId }));
+  } else if (message.operation === "toggle-image-reaction") {
+    const imageId = positiveId(message.imageId);
+    const reaction = ["Like", "Heart", "Laugh", "Cry", "Dislike"].includes(message.reaction)
+      ? message.reaction : null;
+    if (!imageId || !reaction) return { ok: false, code: "invalid-request" };
+    procedure = "reaction.toggle";
+    request = {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ json: { entityId: imageId, entityType: "image", reaction } }),
+    };
   } else if (message.operation === "get-comments") {
     const entityId = positiveId(message.entityId);
     const entityType = COMMENT_ENTITY_TYPES.has(message.entityType) ? message.entityType : null;
@@ -1362,8 +1441,9 @@ let lastHref = location.href;
 let scanTimer;
 
 function scanPage() {
-  openBtn.hidden = ensureNavButton();
+  ensureNavButton();
   positionOverlay();
+  const source = pageSource();
   if (location.href !== lastHref) {
     closeSectionMenu();
     closeOverlay();
@@ -1371,15 +1451,10 @@ function scanPage() {
     remixActivationStarted = false;
     clearTimeout(resultTimer);
     updateWidget();
-  } else if (pageSource() && !pageAction.isConnected) {
-    // React can render the route before its header controls. Retry only while
-    // the semantic page anchor is absent, and again if a rerender removes it.
-    updateWidget();
-  } else if (pageSource()?.type === "model"
-      && !pageActionHost?.classList.contains("cmh-model-action-host")
-      && findModelSidebarActionRow()) {
-    // The right-side action card often arrives after the title. Move the
-    // control into that card as soon as its native action row is available.
+  } else if (source && !pageActionPlacementIsCurrent(source)) {
+    // React can render the route before its native action card, replace that
+    // card at a responsive breakpoint, or leave an extension sibling attached
+    // after removing its anchor. Re-resolve the semantic placement every time.
     updateWidget();
   }
   syncHomepageSectionActions();
@@ -1400,18 +1475,18 @@ const pageObserver = new MutationObserver((records) => {
       || new URLSearchParams(location.search).get("cmh-remix") === "1") {
     scheduleScan();
   }
-  if (pageSource() && !pageAction.isConnected) {
-    scheduleScan();
-    return;
-  }
-  const addedControls = records.some((record) => [...record.addedNodes].some((node) =>
-    node.nodeType === Node.ELEMENT_NODE
-      && (node.matches?.("button, [role='button']") || node.querySelector?.("button, [role='button']"))
+  const placementSelector = 'button, a, [role="button"], [data-with-border]';
+  const placementUiChanged = records.some((record) =>
+    [...record.addedNodes, ...record.removedNodes].some((node) =>
+      node.nodeType === Node.ELEMENT_NODE
+        && (node.matches?.(placementSelector) || node.querySelector?.(placementSelector))
+    )
+  );
+  const placementAnchorRemoved = Boolean(pageActionHost && records.some((record) =>
+    [...record.removedNodes].some((node) => node === pageActionHost || node.contains?.(pageActionHost))
   ));
-  if (pageSource()?.type === "model" && addedControls
-      && !pageActionHost?.classList.contains("cmh-model-action-host")) {
-    scheduleScan();
-  }
+  if (location.href !== lastHref || (pageSource()
+      && (!pageAction.isConnected || placementAnchorRemoved || placementUiChanged))) scheduleScan();
   if (!document.getElementById("cmh-nav-item")) {
     scheduleScan();
     return;
@@ -1437,6 +1512,7 @@ window.addEventListener("resize", () => {
   positionOverlay();
   if (!hubMenu.hidden) positionPageHubMenu();
   if (openSectionAction) positionSectionMenu(openSectionAction);
+  scheduleScan();
 });
 window.addEventListener("scroll", () => {
   if (!hubMenu.hidden) positionPageHubMenu();

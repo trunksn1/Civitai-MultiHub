@@ -11,7 +11,10 @@
     <div class="sidebar-title">
       <h1>MultiHub for Civitai</h1>
       <div class="title-actions">
-        <button id="settings-toggle" class="icon-button" title="Settings" aria-expanded="false">⚙</button>
+        <button id="card-details-toggle" type="button" class="icon-button card-details-icon" aria-pressed="true">
+          <span class="card-details-glyph" aria-hidden="true">i</span>
+        </button>
+        <button id="settings-toggle" type="button" class="icon-button" title="Settings" aria-label="Settings" aria-expanded="false">⚙</button>
       </div>
     </div>
     <p id="browsing-note" class="hint browsing-note"></p>
@@ -134,6 +137,16 @@
       <label class="check-label"><input id="hide-viewed" type="checkbox" /> Hide previously viewed images</label>
       <label class="check-label"><input id="group-posts" type="checkbox" /> Group images from the same post</label>
       <button id="clear-viewed" class="secondary">Clear viewed history</button>
+      <details class="feed-diagnostics" hidden>
+        <summary>Feed diagnostics</summary>
+        <p class="hint">If the feed jumps or its scrollbar suddenly grows, reproduce it once and copy this privacy-safe report.</p>
+        <div class="feed-diagnostics-actions">
+          <button id="reset-scroll-diagnostics" type="button" class="secondary">Reset</button>
+          <button id="copy-scroll-diagnostics" type="button" class="secondary">Copy scroll diagnostics</button>
+        </div>
+        <p id="scroll-diagnostics-status" class="hint" role="status"></p>
+        <textarea id="scroll-diagnostics-output" readonly hidden aria-label="Scroll diagnostics report"></textarea>
+      </details>
       <label>Open links on
         <select id="link-domain">
           <option>civitai.com</option><option>civitai.red</option>

@@ -85,8 +85,20 @@ test("normalizeConfig repairs stored values and deduplicates sources", () => {
   assert.equal(config.feeds[0].globalSort, "newest");
   assert.equal(config.feeds[0].period, "AllTime");
   assert.equal(config.feeds[0].generationFilter, "all");
+  assert.equal(config.feeds[0].showCardDetails, true);
   assert.equal(config.feeds[0].sources.length, 1);
   assert.equal(config.activeFeedId, "hub");
+});
+
+test("card information visibility is independent from grid density and survives normalization", () => {
+  const config = normalizeConfig({
+    feeds: [{
+      id: "hub", name: "Media only", density: "compact", showCardDetails: false, sources: [],
+    }],
+  });
+  assert.equal(config.feeds[0].density, "compact");
+  assert.equal(config.feeds[0].showCardDetails, false);
+  assert.equal(persistentConfig(config).feeds[0].showCardDetails, false);
 });
 
 test("default hubs are retained only while they still exist", () => {

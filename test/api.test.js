@@ -7,6 +7,7 @@ import {
   resolveImageGenerationData, resolveImageComments,
   toggleImageReaction, resolveWritableCollections, addImageToCollection, addImageToCollections,
   postComment, resolveAccountBrowsingLevels, userAvatarUrl, imageBuzzAmount,
+  thumbnailUrl, videoPlaybackUrl, videoPosterUrl,
   CIVITAI_CAPABILITIES, getCivitaiCapabilityState, resetCivitaiCapabilities,
   explainCivitaiError,
 } from "../extension/civitai-api.js";
@@ -317,6 +318,52 @@ test("toggleImageReaction sends one authenticated mutation without retrying", as
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("reactions prefer the signed-in Civitai website session without an API key", async () => {
+  const hadChrome = Object.prototype.hasOwnProperty.call(globalThis, "chrome");
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  const messages = [];
+  globalThis.chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage(message, callback) {
+        messages.push(message);
+        callback({ ok: true, status: 200, payload: null });
+      },
+    },
+  };
+  globalThis.fetch = async () => {
+    throw new Error("The API-key transport must not run for a signed-in reaction");
+  };
+  try {
+    await toggleImageReaction(321, "Like", { linkDomain: "civitai.com" });
+    assert.deepEqual(messages, [{
+      type: "civitai-account-request",
+      operation: "toggle-image-reaction",
+      preferredHost: "civitai.com",
+      imageId: 321,
+      reaction: "Like",
+    }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (hadChrome) globalThis.chrome = originalChrome;
+    else delete globalThis.chrome;
+  }
+});
+
+test("feed videos use a lightweight poster and a resized transcoded playback URL", () => {
+  const original = "https://image.civitai.com/x/id/original=true/clip.webm";
+  assert.equal(thumbnailUrl(original), "https://image.civitai.com/x/id/width=450/clip.webm");
+  assert.equal(
+    videoPlaybackUrl(original),
+    "https://image.civitai.com/x/id/transcode=true,width=450/clip.mp4"
+  );
+  assert.equal(
+    videoPosterUrl(original),
+    "https://image.civitai.com/x/id/anim=false,transcode=true,width=450,original=false,optimized=true/clip.jpeg"
+  );
 });
 
 test("collection account actions prefer the signed-in Civitai session without an API key", async () => {

@@ -503,9 +503,15 @@ async function trpcMutation(procedure, input, settings, signal, capability) {
 export function toggleImageReaction(imageId, reaction, settings, signal) {
   const allowed = new Set(["Like", "Heart", "Laugh", "Cry", "Dislike"]);
   if (!allowed.has(reaction)) throw new Error("Unsupported reaction");
-  return trpcMutation("reaction.toggle", {
-    entityId: Number(imageId), entityType: "image", reaction,
-  }, settings, signal, CIVITAI_CAPABILITIES.reactions);
+  const capability = CIVITAI_CAPABILITIES.reactions;
+  const input = { entityId: Number(imageId), entityType: "image", reaction };
+  return sessionFirst(
+    () => withCapability(capability, () => sessionRequest(
+      "toggle-image-reaction", { imageId: input.entityId, reaction }, settings, signal, capability
+    )),
+    () => trpcMutation("reaction.toggle", input, settings, signal, capability),
+    settings
+  );
 }
 
 export async function resolveWritableCollections(settings, signal) {
@@ -1060,4 +1066,24 @@ export async function fetchStreamPage(stream, settings, signal) {
 // Civitai CDN URL transform: swap the "original=true" segment for a resize.
 export function thumbnailUrl(url, width = 450) {
   return url.replace(/\/original=true\//, `/width=${width}/`);
+}
+
+function videoVariantUrl(url, variant, extension) {
+  const transformed = String(url || "").replace(
+    /\/(?:original=true|[^/]*(?:width|transcode|anim|optimized)=[^/]*)\//,
+    `/${variant}/`
+  );
+  return transformed.replace(/\.[^./?#]+(?=\?|#|$)/, extension);
+}
+
+export function videoPlaybackUrl(url, width = 450) {
+  return videoVariantUrl(url, `transcode=true,width=${width}`, ".mp4");
+}
+
+export function videoPosterUrl(url, width = 450) {
+  return videoVariantUrl(
+    url,
+    `anim=false,transcode=true,width=${width},original=false,optimized=true`,
+    ".jpeg"
+  );
 }

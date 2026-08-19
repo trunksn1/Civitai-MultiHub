@@ -43,6 +43,7 @@ const DEFAULT_FEED = {
   hideViewed: false,
   aspectRatio: "all", // all | portrait | landscape | square
   density: "comfortable", // comfortable | compact
+  showCardDetails: true,
   autoplayVideos: true,
   groupPosts: false,
   viewedIds: [],
@@ -234,6 +235,7 @@ export function normalizeFeed(value, { strict = false } = {}) {
     hideViewed: value.hideViewed === true,
     aspectRatio: ASPECT_RATIOS.has(value.aspectRatio) ? value.aspectRatio : DEFAULT_FEED.aspectRatio,
     density: DENSITIES.has(value.density) ? value.density : DEFAULT_FEED.density,
+    showCardDetails: value.showCardDetails !== false,
     autoplayVideos: value.autoplayVideos !== false,
     groupPosts: value.groupPosts === true,
     viewedIds: Array.isArray(value.viewedIds)

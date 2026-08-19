@@ -2,6 +2,12 @@
 
 * { box-sizing: border-box; }
 
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   display: flex;
@@ -33,15 +39,29 @@ body {
 body.sidebar-collapsed #sidebar { width: 0; padding-left: 0; padding-right: 0; border-color: transparent; overflow: hidden; }
 body.sidebar-collapsed .sidebar-toggle { left: 0; }
 
-#sidebar h1 { font-size: 18px; margin: 0 0 16px; color: #fff; }
+#sidebar h1 { min-width: 0; flex: 1; font-size: 18px; margin: 0 0 16px; color: #fff; }
 .sidebar-title { display: flex; align-items: flex-start; justify-content: space-between; }
-.title-actions { display: flex; gap: 2px; }
+.title-actions { display: flex; flex: 0 0 auto; gap: 4px; }
 #sidebar .sidebar-title .icon-button {
   width: 34px; margin: -5px 0 0; padding: 5px; background: transparent;
   border-color: transparent; color: #c1c2c5; font-size: 18px;
 }
 #sidebar .sidebar-title .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 #sidebar .sidebar-title .icon-button:hover { background: #373a40; }
+#sidebar .sidebar-title .card-details-icon { display: grid; height: 34px; place-items: center; }
+#sidebar .sidebar-title .card-details-icon[aria-pressed="false"] {
+  border-color: #495057; background: #2c2e33; color: #868e96;
+}
+#sidebar .sidebar-title .card-details-icon[aria-pressed="true"] {
+  border-color: #339af0; background: #1971c2; color: #fff;
+}
+#sidebar .sidebar-title .card-details-icon[aria-pressed="false"]:hover { background: #373a40; color: #dee2e6; }
+#sidebar .sidebar-title .card-details-icon[aria-pressed="true"]:hover { background: #228be6; }
+.card-details-glyph {
+  display: grid; width: 18px; height: 18px; place-items: center;
+  border: 1.5px solid currentColor; border-radius: 50%;
+  font: 700 13px/1 Georgia, serif;
+}
 /* The browsing level is Civitai's setting, so this only reports what is in
    force and where it comes from. */
 #sidebar .browsing-note { margin: -8px 0 0; }
@@ -199,6 +219,16 @@ body.sidebar-collapsed .sidebar-toggle { left: 0; }
 .settings-content label { color: #adb5bd; }
 .settings-panel[hidden] { display: none; }
 .settings-panel h3 { margin: 0 0 5px; color: #f1f3f5; font-size: 14px; }
+.feed-diagnostics { margin: 12px 0; padding: 9px 10px; border: 1px solid #3f4249; border-radius: 8px; background: #2c2e33; }
+.feed-diagnostics summary { cursor: pointer; color: #dee2e6; font-size: 12px; font-weight: 700; }
+.feed-diagnostics .hint { margin: 8px 0; }
+.feed-diagnostics-actions { display: flex; gap: 8px; }
+#sidebar .feed-diagnostics-actions button { width: auto; margin: 0; }
+#scroll-diagnostics-output {
+  width: 100%; min-height: 150px; margin-top: 8px; resize: vertical;
+  font: 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+#scroll-diagnostics-output[hidden] { display: none; }
 .hub-manager { width: min(620px, 100%); }
 .hub-manager-list { display: grid; gap: 7px; }
 .hub-manager-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid #3f4249; border-radius: 9px; background: #2c2e33; }
@@ -227,6 +257,12 @@ body.sidebar-collapsed .sidebar-toggle { left: 0; }
   height: 100vh;
   overflow-y: auto;
   overflow-x: hidden;
+  /* The feed is a nested scroller inside a fixed Civitai iframe. When a fast
+     wheel/touch gesture reaches the temporarily short loading edge, keep the
+     gesture here instead of chaining it to the host page. JS owns anchoring
+     during the rare masonry rebuild, so native anchoring must not fight it. */
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
   padding: 16px;
 }
 
@@ -238,6 +274,8 @@ body.sidebar-collapsed .sidebar-toggle { left: 0; }
 body.compact #grid { padding: 9px; }
 body.compact .masonry, body.compact .masonry .col { gap: 8px; }
 body.compact .card .info { padding: 6px 8px; }
+body.hide-card-details .card-actions,
+body.hide-card-details .card .info { display: none; }
 
 .masonry .col {
   flex: 1;
@@ -281,8 +319,12 @@ body.compact .card .info { padding: 6px 8px; }
   width: 52px; height: 52px; display: grid; place-items: center; z-index: 2;
   border-radius: 50%; background: rgba(0, 0, 0, .68); border: 1px solid rgba(255,255,255,.75);
   color: white; font-size: 24px; cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,.45);
+  opacity: 1; transition: opacity .16s ease, background .16s ease;
 }
 .video-play:hover { background: rgba(34,139,230,.9); }
+.video-play.is-playing { opacity: 0; }
+.video-play.is-playing.show-on-interaction,
+.video-play.is-playing:focus-visible { opacity: 1; }
 .card a { display: block; }
 .card img,
 .card video {

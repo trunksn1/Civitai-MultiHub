@@ -46,6 +46,7 @@ const SESSION_OPERATIONS = new Set([
   "get-comments",
   "post-comment",
   "get-image-generation-data",
+  "toggle-image-reaction",
 ]);
 
 // civitai.com and civitai.red carry separate browsing-level preferences, so
@@ -79,7 +80,7 @@ function sendAccountRequest(tabId, message) {
   });
 }
 
-async function routeAccountRequest(message, sender) {
+export async function routeAccountRequest(message, sender) {
   if (!SESSION_OPERATIONS.has(message.operation)) {
     return { ok: false, code: "unsupported-operation" };
   }
@@ -116,6 +117,7 @@ async function routeAccountRequest(message, sender) {
         entityId: message.entityId,
         limit: message.limit,
         content: message.content,
+        reaction: message.reaction,
         collection: message.collection,
         collections: message.collections,
         collectionId: message.collectionId,

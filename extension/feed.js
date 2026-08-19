@@ -1,5 +1,6 @@
 import {
-  openSourceStreams, fetchStreamPage, resolveModel, thumbnailUrl, setCacheBuster,
+  openSourceStreams, fetchStreamPage, resolveModel, thumbnailUrl, videoPlaybackUrl, videoPosterUrl,
+  setCacheBuster,
   clearModelCache, resolveModelVersion, resolveCreatorProfile, resolveCollection,
   resolveImageGenerationData, resolveImageComments,
   toggleImageReaction,
@@ -28,7 +29,13 @@ import {
   matchesGenerationFilters,
 } from "./content-filters.js";
 
-const BATCH = 30; // images revealed per scroll step
+const INITIAL_BATCH = 15;
+const BATCH = 15; // reveal the prefetched second half, then continue in small steps
+const STREAM_FETCH_CONCURRENCY = 6;
+const LOAD_AHEAD_PX = 3200;
+const SCROLL_IDLE_MS = 240;
+const SCROLL_DIAGNOSTICS_KEY = "cmh-scroll-diagnostics-v1";
+const MAX_SCROLL_DIAGNOSTICS = 240;
 const pageParams = new URLSearchParams(location.search);
 const requestedHost = pageParams.get("embedded") === "1" ? pageParams.get("host") : null;
 const embeddedHost = isAllowedCivitaiHost(requestedHost)
@@ -56,7 +63,9 @@ let pool = []; // filtered and globally sorted items
 let renderedCount = 0;
 let renderedIds = new Set();
 let loadingRunId = null;
+let previewedRunId = null;
 let runController = null;
+let feedRunApiSettings = null;
 let sourceLinks = {}; // source label -> site path, for the links under each card
 let sourceKinds = {}; // source label -> user | model | collection
 let sourceModelTypes = {}; // model source label -> Checkpoint | LORA | TextualInversion | ...
@@ -70,6 +79,7 @@ let viewedIdSet = new Set();
 let viewedSaveTimer;
 const versionMetadataQueue = [];
 let accountBrowsingReason = null; // how the level was established, for the sidebar note
+let browsingLevelRefreshPending = false;
 let versionMetadataActive = 0;
 const creatorProfileQueue = [];
 let creatorProfileActive = 0;
@@ -368,8 +378,8 @@ function panelOnScreen() {
 async function refreshBrowsingLevels({ force = false } = {}) {
   if (!force && !panelOnScreen()) return;
   const changed = await syncBrowsingLevelsFromCivitai();
+  if (changed) browsingLevelRefreshPending = true;
   renderBrowsingLevelNote();
-  if (changed) startFeed();
 }
 
 function watchCivitaiBrowsingLevel() {
@@ -391,9 +401,6 @@ function watchCivitaiBrowsingLevel() {
   // was collapsed is applied immediately rather than on the next tick.
   window.addEventListener("message", async (event) => {
     if (event.source !== window.parent || event.data?.type !== "cmh-panel-shown") return;
-    if (config?.defaultFeedId && config.activeFeedId !== config.defaultFeedId) {
-      await switchHub(config.defaultFeedId);
-    }
     refreshBrowsingLevels({ force: true });
   });
   if (!document.hidden) start();
@@ -585,7 +592,7 @@ async function addSourceFromHover(draft, hub) {
       : `${sourceLabel(draft)} was added to “${hub.name}”.`;
   setStatus(message);
   closeSourceHoverMenu();
-  if (hub.id === feed().id && result.status !== "duplicate") startFeed();
+  if (hub.id === feed().id && result.status !== "duplicate") startFeed({ reason: "source-hover-add" });
 }
 
 function sortedHubs() {
@@ -879,7 +886,7 @@ function renderSources() {
       source.enabled = enabled.checked;
       await saveConfig(config);
       renderSources();
-      startFeed();
+      startFeed({ reason: "source-toggle" });
     });
 
     const text = document.createElement("div");
@@ -922,7 +929,7 @@ function renderSources() {
       await saveConfig(config);
       renderHubs();
       renderSources();
-      startFeed();
+      startFeed({ reason: "source-remove" });
     });
 
     text.append(label);
@@ -1044,7 +1051,7 @@ async function transferEditedSource(destination) {
   closeSourceEditor();
   renderHubs();
   renderSources();
-  startFeed();
+  startFeed({ reason: "source-transfer" });
   return true;
 }
 
@@ -1099,13 +1106,228 @@ const grid = $("grid");
 let masonry, sentinel, emptyEl;
 let columns = [];
 let columnHeights = [];
+let reusableMedia = new Map();
+let lastGridScrollAt = -Infinity;
+let lastForwardScrollInputAt = -Infinity;
+let loadAheadFrame = null;
+let gridGeometryFrame = null;
+let gridGeometryBaseline = null;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const visibleVideos = new Map();
+
+function loadScrollDiagnostics() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(SCROLL_DIAGNOSTICS_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.slice(-MAX_SCROLL_DIAGNOSTICS) : [];
+  } catch {
+    return [];
+  }
+}
+
+let scrollDiagnostics = loadScrollDiagnostics();
+
+function gridMetrics() {
+  return {
+    scrollTop: Math.round(grid.scrollTop),
+    scrollHeight: Math.round(grid.scrollHeight),
+    clientHeight: Math.round(grid.clientHeight),
+    clientWidth: Math.round(grid.clientWidth),
+    cards: grid.querySelectorAll(".card[data-image-id]").length,
+    columns: columns.length,
+    renderedCount,
+    poolSize: pool.length,
+    streamCount: streams.length,
+    activeStreamCount: streams.filter((stream) => stream.nextUrl).length,
+    runId,
+    loadingRunId,
+  };
+}
+
+function recordScrollDiagnostic(type, details = {}) {
+  const entry = {
+    time: new Date().toISOString(),
+    sinceLoadMs: Math.round(performance.now()),
+    type,
+    ...details,
+    metrics: gridMetrics(),
+  };
+  scrollDiagnostics.push(entry);
+  scrollDiagnostics = scrollDiagnostics.slice(-MAX_SCROLL_DIAGNOSTICS);
+  try {
+    sessionStorage.setItem(SCROLL_DIAGNOSTICS_KEY, JSON.stringify(scrollDiagnostics));
+  } catch {
+    // Diagnostics must never interfere with the feed itself.
+  }
+  return entry;
+}
+
+function resetScrollDiagnostics() {
+  scrollDiagnostics = [];
+  gridGeometryBaseline = gridMetrics();
+  try {
+    sessionStorage.removeItem(SCROLL_DIAGNOSTICS_KEY);
+  } catch {
+    // Diagnostics must never interfere with the feed itself.
+  }
+  recordScrollDiagnostic("diagnostics-reset");
+}
+
+function scrollDiagnosticsReport() {
+  return JSON.stringify({
+    report: "Civitai MultiHub scroll diagnostics",
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    extensionVersion: chrome.runtime.getManifest().version,
+    distribution: DISTRIBUTION.channel,
+    browser: navigator.userAgent,
+    embedded: Boolean(embeddedHost),
+    current: gridMetrics(),
+    events: scrollDiagnostics,
+  }, null, 2);
+}
+
+async function copyScrollDiagnostics() {
+  const output = $("scroll-diagnostics-output");
+  const status = $("scroll-diagnostics-status");
+  const report = scrollDiagnosticsReport();
+  output.value = report;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(report);
+    copied = true;
+  } catch {
+    output.hidden = false;
+    output.focus();
+    output.select();
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    }
+  }
+  status.textContent = copied
+    ? "Copied. Paste the report into the bug report or chat."
+    : "Automatic copy was blocked. Select and copy the report below.";
+  output.hidden = copied;
+}
+
+function checkGridGeometry(trigger) {
+  const current = gridMetrics();
+  const previous = gridGeometryBaseline;
+  gridGeometryBaseline = current;
+  if (!previous) return;
+  const heightDrop = previous.scrollHeight - current.scrollHeight;
+  const scrollTopDrop = previous.scrollTop - current.scrollTop;
+  const dropThreshold = Math.max(240, previous.clientHeight * 0.25);
+  if (heightDrop >= dropThreshold) {
+    const entry = recordScrollDiagnostic("scroll-height-collapse", {
+      trigger,
+      heightDrop,
+      scrollTopDrop,
+      previous,
+    });
+    console.warn("MultiHub feed height collapsed", entry);
+  } else if (scrollTopDrop >= Math.max(200, current.clientHeight * 0.35)
+      && performance.now() - lastForwardScrollInputAt < 800) {
+    const entry = recordScrollDiagnostic("forward-scroll-position-drop", {
+      trigger,
+      scrollTopDrop,
+      previous,
+    });
+    console.warn("MultiHub feed moved backward during forward scrolling", entry);
+  }
+}
+
+function scheduleGridGeometryCheck(trigger) {
+  if (gridGeometryFrame !== null) return;
+  gridGeometryFrame = requestAnimationFrame(() => {
+    gridGeometryFrame = null;
+    checkGridGeometry(trigger);
+  });
+}
+
+const gridResizeObserver = new ResizeObserver(() => scheduleGridGeometryCheck("masonry-resize"));
+
+function noteGridScrollActivity(event) {
+  lastGridScrollAt = performance.now();
+  if (event.type === "wheel" && event.deltaY > 0) lastForwardScrollInputAt = performance.now();
+  scheduleGridGeometryCheck(event.type);
+  if (loadAheadFrame !== null) return;
+  loadAheadFrame = requestAnimationFrame(() => {
+    loadAheadFrame = null;
+    if (sentinelInView()) showMore();
+  });
+}
+
+grid.addEventListener("scroll", noteGridScrollActivity, { passive: true });
+grid.addEventListener("wheel", noteGridScrollActivity, { passive: true });
+grid.addEventListener("touchmove", noteGridScrollActivity, { passive: true });
+
+function gridScrollIsActive() {
+  return performance.now() - lastGridScrollAt < SCROLL_IDLE_MS;
+}
+
+async function waitForGridScrollIdle(signal) {
+  while (gridScrollIsActive()) {
+    if (signal?.aborted) throw new DOMException("Feed run replaced", "AbortError");
+    const remaining = Math.max(16, SCROLL_IDLE_MS - (performance.now() - lastGridScrollAt));
+    await new Promise((resolve, reject) => {
+      const finish = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const timer = setTimeout(finish, remaining);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new DOMException("Feed run replaced", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+}
+
+function ensureVideoSource(video) {
+  const source = video.dataset.videoSrc;
+  if (source && video.getAttribute("src") !== source) video.src = source;
+}
+
+function syncVisibleVideoPlayback() {
+  const candidates = [...visibleVideos.entries()]
+    .filter(([video, ratio]) => video.isConnected && ratio >= 0.25);
+  const manuallyStarted = candidates.find(([video]) => video.dataset.manualPlay === "true");
+  const selected = manuallyStarted || candidates.sort((a, b) => b[1] - a[1])[0];
+  const canAutoplay = config && feed().autoplayVideos && !reduceMotion.matches && !document.hidden;
+  for (const video of grid.querySelectorAll("video")) {
+    const shouldPlay = !document.hidden && selected?.[0] === video
+      && (video.dataset.manualPlay === "true" || canAutoplay);
+    if (!shouldPlay) {
+      video.pause();
+      continue;
+    }
+    ensureVideoSource(video);
+    video.play().catch(() => {});
+  }
+}
+
 const mediaObserver = new IntersectionObserver((entries) => {
   for (const entry of entries) {
-    if (reduceMotion.matches || !feed().autoplayVideos || !entry.isIntersecting) entry.target.pause();
-    else entry.target.play().catch(() => {});
+    if (!entry.isIntersecting) {
+      visibleVideos.delete(entry.target);
+      entry.target.dataset.manualPlay = "false";
+      entry.target.pause();
+    } else {
+      visibleVideos.set(entry.target, entry.intersectionRatio);
+    }
   }
-}, { root: grid, rootMargin: "300px" });
+  syncVisibleVideoPlayback();
+}, { root: grid, threshold: [0, 0.25, 0.5, 0.75, 1] });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    for (const video of grid.querySelectorAll("video")) video.dataset.manualPlay = "false";
+  }
+  syncVisibleVideoPlayback();
+});
 function saveViewedHistorySoon() {
   feed().viewedIds = [...viewedIdSet].slice(-3000);
   viewedIdSet = new Set(feed().viewedIds);
@@ -1139,9 +1361,15 @@ function columnCount() {
   return Math.max(1, Math.floor(grid.clientWidth / (feed().density === "compact" ? 260 : 340)));
 }
 
-function setupGrid() {
+function setupGrid({ preserveVideos = new Set(), reason = "unspecified" } = {}) {
+  recordScrollDiagnostic("setup-grid-start", { reason });
   if (sentinel) observer.unobserve(sentinel);
+  gridResizeObserver.disconnect();
+  for (const video of grid.querySelectorAll("video")) {
+    if (!preserveVideos.has(video)) video.pause();
+  }
   mediaObserver.disconnect();
+  visibleVideos.clear();
   viewedObserver.disconnect();
   grid.textContent = "";
   emptyEl = document.createElement("p");
@@ -1163,6 +1391,43 @@ function setupGrid() {
   observer.observe(sentinel);
 
   grid.append(emptyEl, masonry, sentinel);
+  gridResizeObserver.observe(masonry);
+  checkGridGeometry(`setup-grid:${reason}`);
+  recordScrollDiagnostic("setup-grid-end", { reason });
+}
+
+function observeCard(card) {
+  const video = card.querySelector(":scope > a > video");
+  if (video) mediaObserver.observe(video);
+  viewedObserver.observe(card);
+}
+
+function captureReusableMedia() {
+  const captured = new Map();
+  const gridTop = grid.getBoundingClientRect().top;
+  const cards = [...grid.querySelectorAll(".card[data-image-id]")]
+    .sort((a, b) => Math.abs(a.getBoundingClientRect().top - gridTop)
+      - Math.abs(b.getBoundingClientRect().top - gridTop));
+  for (const card of cards) {
+    const media = card.querySelector(":scope > a > img, :scope > a > video");
+    if (media) captured.set(Number(card.dataset.imageId), media);
+    if (captured.size >= 90) break;
+  }
+  for (const [id, media] of reusableMedia) {
+    if (captured.size >= 90) break;
+    if (!captured.has(id)) captured.set(id, media);
+  }
+  return captured;
+}
+
+function takeReusableMedia(item, tagName, source) {
+  const media = reusableMedia.get(Number(item.id));
+  if (!media || media.tagName !== tagName) return null;
+  const previousSource = tagName === "VIDEO"
+    ? media.dataset.videoSrc : media.getAttribute("src");
+  if (previousSource !== source) return null;
+  reusableMedia.delete(Number(item.id));
+  return media;
 }
 
 function showSkeletons() {
@@ -1392,43 +1657,73 @@ function makeCard(item) {
   let media;
   let videoPlay;
   if (item.type === "video") {
-    media = document.createElement("video");
+    const playbackSource = videoPlaybackUrl(item.url);
+    media = takeReusableMedia(item, "VIDEO", playbackSource) || document.createElement("video");
     media.muted = true;
     media.loop = true;
     media.playsInline = true;
-    media.preload = "metadata";
+    media.preload = "none";
+    media.poster = videoPosterUrl(item.url);
+    media.dataset.videoSrc = playbackSource;
     media.setAttribute("aria-label", `Video by ${item.username || "unknown creator"}`);
-    mediaObserver.observe(media);
     videoPlay = document.createElement("span");
     videoPlay.className = "video-play";
     videoPlay.textContent = "▶";
     videoPlay.role = "button";
     videoPlay.tabIndex = 0;
     videoPlay.setAttribute("aria-label", "Play video");
+    let controlTimer;
+    const revealPlayingControl = () => {
+      if (!videoPlay.classList.contains("is-playing")) return;
+      videoPlay.classList.add("show-on-interaction");
+      clearTimeout(controlTimer);
+      controlTimer = setTimeout(() => videoPlay.classList.remove("show-on-interaction"), 650);
+    };
+    link.addEventListener("pointermove", revealPlayingControl);
     const toggleVideo = (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (media.paused) media.play().catch(() => {});
-      else media.pause();
+      if (media.paused) {
+        media.dataset.manualPlay = "true";
+        ensureVideoSource(media);
+        media.play().catch(() => {});
+      } else {
+        media.dataset.manualPlay = "false";
+        media.pause();
+      }
     };
     videoPlay.addEventListener("click", toggleVideo);
     videoPlay.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") toggleVideo(event);
     });
-    media.addEventListener("play", () => {
-      videoPlay.textContent = "❚❚";
-      videoPlay.setAttribute("aria-label", "Pause video");
-    });
-    media.addEventListener("pause", () => {
-      videoPlay.textContent = "▶";
-      videoPlay.setAttribute("aria-label", "Play video");
-    });
+    media._cmhPlayControl = videoPlay;
+    media._cmhRevealPlayControl = revealPlayingControl;
+    if (media.dataset.playbackEventsBound !== "true") {
+      media.dataset.playbackEventsBound = "true";
+      media.addEventListener("play", () => {
+        const control = media._cmhPlayControl;
+        if (!control) return;
+        control.textContent = "❚❚";
+        control.classList.add("is-playing");
+        control.setAttribute("aria-label", "Pause video");
+        media._cmhRevealPlayControl?.();
+      });
+      media.addEventListener("pause", () => {
+        const control = media._cmhPlayControl;
+        if (!control) return;
+        control.textContent = "▶";
+        control.classList.remove("is-playing", "show-on-interaction");
+        control.setAttribute("aria-label", "Play video");
+      });
+    }
+    if (!media.paused) videoPlay.classList.add("is-playing");
   } else {
-    media = document.createElement("img");
+    const imageSource = thumbnailUrl(item.url);
+    media = takeReusableMedia(item, "IMG", imageSource) || document.createElement("img");
     media.loading = "lazy";
     media.alt = `Image by ${item.username || "unknown creator"}`;
+    if (media.getAttribute("src") !== imageSource) media.src = imageSource;
   }
-  media.src = thumbnailUrl(item.url);
   if (item.width > 0 && item.height > 0) {
     media.style.aspectRatio = `${item.width} / ${item.height}`;
   }
@@ -1447,7 +1742,6 @@ function makeCard(item) {
     button.classList.toggle("active", item._sessionReactions.has(name));
     button.textContent = `${icon} ${Number(item.stats?.[key]) || 0}`;
     button.addEventListener("click", async () => {
-      if (!config.settings.apiKey) return window.open(link.href, "_blank", "noopener");
       const actionId = reactionActionId(item, name);
       if (pendingReactionActions.has(actionId)) return;
       pendingReactionActions.add(actionId);
@@ -1553,7 +1847,7 @@ function makeCard(item) {
       await saveConfig(config);
       renderHiddenCreators();
       syncFeedControls();
-      applyLocalFilters();
+      applyLocalFilters({ reason: "card-hide-creator" });
     });
     stats.append(" · ", hideCreator);
   }
@@ -1563,7 +1857,6 @@ function makeCard(item) {
   if (infoSignals) info.append(infoSignals);
   info.append(stats);
   card.append(link, cardActions, info);
-  viewedObserver.observe(card);
   return card;
 }
 
@@ -1611,17 +1904,6 @@ function renderLightboxReactions(item, imageUrl) {
   ];
   $("lightbox-reactions").textContent = "";
   $("lightbox-action-status").textContent = "";
-  if (!config.settings.apiKey) {
-    const link = document.createElement("a");
-    link.href = imageUrl;
-    link.target = "_blank";
-    link.rel = "noopener";
-    link.textContent = reactions.filter(([, , key]) => Number(stats[key]) > 0)
-      .map(([, icon, key]) => `${icon} ${stats[key]}`).join("   ") || "React on Civitai ↗";
-    link.title = "Open on Civitai to react";
-    $("lightbox-reactions").append(link);
-    return;
-  }
   if (!(item._sessionReactions instanceof Set)) item._sessionReactions = new Set();
   for (const [name, icon, key] of reactions) {
     const button = document.createElement("button");
@@ -2244,12 +2526,14 @@ function appendCards(items, reusableCards = new Map()) {
     if (renderedIds.has(item.id)) continue;
     renderedIds.add(item.id);
     const shortest = Math.max(0, columnHeights.indexOf(Math.min(...columnHeights)));
-    columns[shortest].append(reusableCards.get(item.id) || makeCard(item));
+    const card = reusableCards.get(item.id) || makeCard(item);
+    columns[shortest].append(card);
+    observeCard(card);
     // Estimate card height by aspect ratio so columns stay balanced. Items
     // with missing dimensions count as square — a NaN here would poison
     // Math.min and crash rendering.
     const ratio = item.width > 0 && item.height > 0 ? item.height / item.width : 1;
-    columnHeights[shortest] += ratio + 0.2;
+    columnHeights[shortest] += ratio + (feed().showCardDetails ? 0.2 : 0);
   }
 }
 
@@ -2261,21 +2545,55 @@ function visibleCardAnchors() {
     .sort((a, b) => a.offset - b.offset);
 }
 
-function rebuildRendered({ preserveAnchor = false } = {}) {
+function rebuildRendered({
+  preserveAnchor = false,
+  reuseCards = true,
+  reason = "unspecified",
+} = {}) {
+  recordScrollDiagnostic("rebuild-rendered-start", { reason, preserveAnchor, reuseCards });
   const scrollTop = grid.scrollTop;
   const anchors = preserveAnchor ? visibleCardAnchors() : [];
-  const reusableCards = new Map([...grid.querySelectorAll(".card[data-image-id]")]
-    .map((card) => [Number(card.dataset.imageId), card]));
+  const reusableCards = reuseCards
+    ? new Map([...grid.querySelectorAll(".card[data-image-id]")]
+      .map((card) => [Number(card.dataset.imageId), card]))
+    : new Map();
   const items = pool.slice(0, renderedCount);
   const itemIds = new Set(items.map((item) => item.id));
   const anchor = anchors.find((candidate) => itemIds.has(candidate.id));
+  for (const [id, card] of reusableCards) {
+    if (itemIds.has(id) || reusableMedia.size >= 90) continue;
+    const media = card.querySelector(":scope > a > img, :scope > a > video");
+    if (media) reusableMedia.set(id, media);
+  }
+  const preserveVideos = new Set(
+    [...reusableCards.entries()]
+      .filter(([id]) => itemIds.has(id))
+      .map(([, card]) => card.querySelector(":scope > a > video"))
+      .filter(Boolean)
+  );
+  for (const media of reusableMedia.values()) {
+    if (media.tagName === "VIDEO") preserveVideos.add(media);
+  }
   renderedIds = new Set();
-  setupGrid();
+  setupGrid({ preserveVideos, reason: `rebuild:${reason}` });
   appendCards(items, reusableCards);
+  // Media kept for cards that no longer belong to the rendered prefix remains
+  // reusable, but it must not continue playing while detached from the feed.
+  for (const media of reusableMedia.values()) {
+    if (media.tagName !== "VIDEO") continue;
+    media.dataset.manualPlay = "false";
+    media.pause();
+  }
   renderedIds = new Set(items.map((i) => i.id));
   renderedCount = items.length;
   if (!anchor) {
     grid.scrollTop = scrollTop;
+    checkGridGeometry(`rebuild-rendered:${reason}`);
+    recordScrollDiagnostic("rebuild-rendered-end", {
+      reason,
+      itemCount: items.length,
+      anchorFound: false,
+    });
     return;
   }
   const replacement = grid.querySelector(`.card[data-image-id="${anchor.id}"]`);
@@ -2283,10 +2601,36 @@ function rebuildRendered({ preserveAnchor = false } = {}) {
   // anchor drops the reader back to the top of the feed.
   if (!replacement) {
     grid.scrollTop = scrollTop;
+    checkGridGeometry(`rebuild-rendered:${reason}`);
+    recordScrollDiagnostic("rebuild-rendered-end", {
+      reason,
+      itemCount: items.length,
+      anchorFound: true,
+      replacementFound: false,
+    });
     return;
   }
   const gridTop = grid.getBoundingClientRect().top;
   grid.scrollTop += replacement.getBoundingClientRect().top - gridTop - anchor.offset;
+  checkGridGeometry(`rebuild-rendered:${reason}`);
+  recordScrollDiagnostic("rebuild-rendered-end", {
+    reason,
+    itemCount: items.length,
+    anchorFound: true,
+    replacementFound: true,
+  });
+}
+
+function renderInitialPreview(run) {
+  if (run !== runId || pool.length === 0) return;
+  // Once the first cards are visible they are immutable for this run. Delayed
+  // creators are merged into the pool and appended later; replacing the first
+  // 15 on every response used to eject the visible card and clamp scroll to 0.
+  if (previewedRunId === run) return;
+  renderedCount = Math.min(INITIAL_BATCH, pool.length);
+  rebuildRendered({ preserveAnchor: true, reuseCards: false, reason: "initial-preview" });
+  previewedRunId = run;
+  setStatus(`Showing ${renderedCount} while the remaining sources load…`);
 }
 
 // ---------- infinite loading ----------
@@ -2345,11 +2689,11 @@ function rebuildPool() {
   }
 }
 
-function applyLocalFilters({ preserveAnchor = true } = {}) {
+function applyLocalFilters({ preserveAnchor = true, reason = "local-filter" } = {}) {
   const visibleTarget = Math.max(BATCH, renderedCount);
   rebuildPool();
   renderedCount = Math.min(visibleTarget, pool.length);
-  rebuildRendered({ preserveAnchor });
+  rebuildRendered({ preserveAnchor, reason });
   const exhausted = activeStreams().length === 0;
   emptyEl.hidden = !(pool.length === 0 && exhausted);
   if (!emptyEl.hidden) emptyEl.textContent = "No fetched images match the current local filters.";
@@ -2411,11 +2755,14 @@ function streamsBlockingFrontier() {
   return active.filter((stream) => cmp(stream.lastItem, bestFrontier) === 0);
 }
 
-async function fetchMorePages(run, signal) {
-  await mapConcurrent(streamsBlockingFrontier(), 2, async (stream) => {
+async function fetchMorePages(run, signal, { preview = false } = {}) {
+  await mapConcurrent(streamsBlockingFrontier(), STREAM_FETCH_CONCURRENCY, async (stream) => {
     try {
-      const items = await fetchStreamPage(stream, effectiveApiSettings(), signal);
-      if (run === runId) mergeFetchedItems(items);
+      const items = await fetchStreamPage(stream, feedRunApiSettings || effectiveApiSettings(), signal);
+      if (run === runId) {
+        mergeFetchedItems(items);
+        if (preview) renderInitialPreview(run);
+      }
     } catch (err) {
       if (err.name === "AbortError") return;
       stream.nextUrl = null;
@@ -2441,7 +2788,7 @@ function errorSuffix() {
 // round actually made progress.
 function sentinelInView() {
   if (!sentinel) return false;
-  return sentinel.getBoundingClientRect().top <= grid.getBoundingClientRect().bottom + 1200;
+  return sentinel.getBoundingClientRect().top <= grid.getBoundingClientRect().bottom + LOAD_AHEAD_PX;
 }
 
 async function showMore(run = runId) {
@@ -2450,6 +2797,7 @@ async function showMore(run = runId) {
   const signal = runController?.signal;
   const startedRendered = renderedCount;
   const startedPool = pool.length;
+  recordScrollDiagnostic("show-more-start", { requestedRun: run });
   try {
     const target = renderedCount + BATCH;
     let rounds = 0;
@@ -2460,18 +2808,9 @@ async function showMore(run = runId) {
     }
     if (run !== runId) return;
 
-    // Civitai's engagement pages use a hidden score that can reveal an item
-    // with a higher visible count on a later page. Rebuild the fetched prefix
-    // so the cards on screen agree with our raw-count comparator. Anchor it to
-    // a visible card: a raw scrollTop restore lands somewhere else once the
-    // re-ranked cards change column and the reader is thrown back up the feed.
-    if (!hasFrontier(feed().globalSort) && renderedCount > 0) {
-      rebuildRendered({ preserveAnchor: true });
-    }
-
-    // Reveal by filtering unrendered items rather than slicing by index: for
-    // reaction sorts a later fetch can re-rank the pool, and an index slice
-    // would silently skip items that moved above the rendered prefix.
+    // Reveal by filtering unrendered items rather than rebuilding cards already
+    // on screen. Engagement pages can re-rank fetched items, but a stable reader
+    // is more important than moving a playing video after every network page.
     const limit = Math.min(target, safeLimit());
     const unrendered = pool.slice(0, limit).filter((i) => !renderedIds.has(i.id));
     appendCards(unrendered.slice(0, Math.max(0, target - renderedCount)));
@@ -2494,6 +2833,13 @@ async function showMore(run = runId) {
     );
   } finally {
     if (loadingRunId === run) loadingRunId = null;
+    checkGridGeometry("show-more-end");
+    recordScrollDiagnostic("show-more-end", {
+      requestedRun: run,
+      runStillCurrent: run === runId,
+      renderedAdded: renderedCount - startedRendered,
+      poolAdded: pool.length - startedPool,
+    });
   }
   const progressed = renderedCount > startedRendered || pool.length > startedPool;
   const moreToShow = renderedCount < pool.length || activeStreams().length > 0;
@@ -2506,15 +2852,37 @@ const observer = new IntersectionObserver(
   (entries) => {
     if (entries.some((e) => e.isIntersecting)) showMore();
   },
-  { root: grid, rootMargin: "1200px" }
+  { root: grid, rootMargin: `${LOAD_AHEAD_PX}px 0px` }
 );
 
-async function startFeed({ clearImmediately = false } = {}) {
+async function startFeed({
+  clearImmediately = false,
+  refreshData = false,
+  reason = "unspecified",
+} = {}) {
+  recordScrollDiagnostic("start-feed-request", { reason, clearImmediately, refreshData });
+  const retainedView = !clearImmediately && masonry
+    ? {
+        count: grid.querySelectorAll(".card[data-image-id]").length,
+        anchorIds: visibleCardAnchors().map(({ id }) => id),
+      }
+    : null;
+  reusableMedia = captureReusableMedia();
   runController?.abort();
   cancelQueuedVersionMetadata();
   runController = new AbortController();
   const signal = runController.signal;
   const run = ++runId;
+  recordScrollDiagnostic("start-feed-run", {
+    reason,
+    requestedRun: run,
+    retainedCardCount: retainedView?.count || 0,
+  });
+  feedRunApiSettings = effectiveApiSettings();
+  browsingLevelRefreshPending = false;
+  renderBrowsingLevelNote();
+  loadingRunId = run;
+  previewedRunId = retainedView?.count ? run : null;
   streams = [];
   itemMap = new Map();
   pool = [];
@@ -2526,15 +2894,19 @@ async function startFeed({ clearImmediately = false } = {}) {
   runErrors = [];
   renderErrors();
   clearModelCache();
-  setCacheBuster(`${Date.now()}`); // fresh token per (re)start → bypass edge cache
+  // Only the user's Refresh action bypasses Civitai's edge cache. Background
+  // synchronization and ordinary settings changes keep stable request URLs.
+  if (refreshData) setCacheBuster(`${Date.now()}`);
   if (clearImmediately || !masonry) {
-    setupGrid();
+    setupGrid({ reason: `start-feed-clear:${reason}` });
     showSkeletons();
+    checkGridGeometry(`start-feed-skeletons:${reason}`);
   }
 
   const f = feed();
   viewedIdSet = new Set(f.viewedIds);
   document.body.classList.toggle("compact", f.density === "compact");
+  document.body.classList.toggle("hide-card-details", !f.showCardDetails);
   if (!visitThresholds.has(f.id)) {
     visitThresholds.set(f.id, f.lastVisitedAt);
     f.lastVisitedAt = new Date().toISOString();
@@ -2543,44 +2915,89 @@ async function startFeed({ clearImmediately = false } = {}) {
   previousVisitAt = visitThresholds.get(f.id);
   const enabledSources = f.sources.filter((source) => source.enabled !== false);
   if (enabledSources.length === 0) {
-    setupGrid();
+    if (loadingRunId === run) loadingRunId = null;
+    setupGrid({ reason: `start-feed-empty:${reason}` });
     emptyEl.hidden = false;
     emptyEl.textContent = f.sources.length === 0
       ? "Add a user, model, LoRA or public collection on the left — or browse civitai and use the “Add to MultiHub” button."
       : "All sources in this hub are disabled.";
     setStatus("");
+    recordScrollDiagnostic("start-feed-end", { reason, requestedRun: run, emptySources: true });
     return;
   }
 
   setStatus("Opening sources…");
-  await mapConcurrent(enabledSources, 2, async (source) => {
-    try {
-      const opened = await openSourceStreams(source, f, effectiveApiSettings(), signal);
-      if (run === runId) {
-        streams.push(...opened);
-        for (const s of opened) {
-          sourceLinks[s.label] = s.href;
-          sourceKinds[s.label] = source.type;
-          if (source.type === "model") sourceModelTypes[s.label] = s.modelType || "";
+  try {
+    await mapConcurrent(enabledSources, 2, async (source) => {
+      try {
+        const opened = await openSourceStreams(source, f, feedRunApiSettings, signal);
+        if (run === runId) {
+          streams.push(...opened);
+          for (const s of opened) {
+            sourceLinks[s.label] = s.href;
+            sourceKinds[s.label] = source.type;
+            if (source.type === "model") sourceModelTypes[s.label] = s.modelType || "";
+          }
+        }
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        console.warn("MultiHub source failed:", sourceLabel(source), err);
+        if (run === runId) {
+          runErrors.push(`${sourceLabel(source)} (${err.message})`);
+          renderErrors();
         }
       }
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      console.warn("MultiHub source failed:", sourceLabel(source), err);
-      if (run === runId) {
-        runErrors.push(`${sourceLabel(source)} (${err.message})`);
-        renderErrors();
+    });
+    if (run !== runId) return;
+    if (activeStreams().length > 0) await fetchMorePages(run, signal, { preview: true });
+  } catch (error) {
+    if (loadingRunId === run) loadingRunId = null;
+    recordScrollDiagnostic("start-feed-error", {
+      reason,
+      requestedRun: run,
+      errorName: error?.name || "Error",
+    });
+    throw error;
+  }
+  if (run !== runId) return;
+  if (retainedView?.count) {
+    // A refresh may finish while wheel/touch momentum is still moving through
+    // the retained grid. Replacing it in that moment lets the browser apply the
+    // remaining scroll to a briefly empty container and clamp it to the top.
+    try {
+      recordScrollDiagnostic("start-feed-waiting-for-scroll-idle", { reason, requestedRun: run });
+      await waitForGridScrollIdle(signal);
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        if (loadingRunId === run) loadingRunId = null;
+        return;
       }
+      throw error;
     }
-  });
-  if (run !== runId) return;
-  if (activeStreams().length > 0) await fetchMorePages(run, signal);
-  if (run !== runId) return;
-  setupGrid();
-  const initialLimit = Math.min(BATCH, safeLimit());
-  appendCards(pool.slice(0, initialLimit));
-  renderedCount = renderedIds.size;
+    if (run !== runId) return;
+    const liveAnchorIds = visibleCardAnchors().map(({ id }) => id);
+    const anchorIds = [...new Set([...liveAnchorIds, ...retainedView.anchorIds])];
+    const anchorIndex = anchorIds.reduce((best, id) => {
+      const index = pool.findIndex((item) => item.id === id);
+      return index >= 0 && (best < 0 || index < best) ? index : best;
+    }, -1);
+    renderedCount = Math.min(
+      pool.length,
+      Math.max(INITIAL_BATCH, retainedView.count, anchorIndex + 1)
+    );
+    rebuildRendered({
+      preserveAnchor: true,
+      reuseCards: false,
+      reason: `start-feed-reconcile:${reason}`,
+    });
+  } else {
+    if (previewedRunId !== run) renderInitialPreview(run);
+    if (previewedRunId !== run) setupGrid({ reason: `start-feed-no-preview:${reason}` });
+  }
+  if (loadingRunId === run) loadingRunId = null;
   await showMore(run);
+  checkGridGeometry(`start-feed-end:${reason}`);
+  recordScrollDiagnostic("start-feed-end", { reason, requestedRun: run, emptySources: false });
 }
 
 // Rebuild the masonry when the column count changes.
@@ -2588,7 +3005,12 @@ let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (columns.length !== columnCount()) rebuildRendered();
+    const previousColumns = columns.length;
+    const nextColumns = columnCount();
+    if (panelOnScreen() && previousColumns !== nextColumns) {
+      recordScrollDiagnostic("column-count-change", { previousColumns, nextColumns });
+      rebuildRendered({ preserveAnchor: true, reason: "column-resize" });
+    }
   }, 200);
 });
 
@@ -2601,6 +3023,14 @@ function syncFeedControls() {
   $("aspect-ratio").value = feed().aspectRatio;
   $("generation-filter").value = feed().generationFilter;
   $("density").value = feed().density;
+  document.body.classList.toggle("compact", feed().density === "compact");
+  const cardDetailsButton = $("card-details-toggle");
+  const cardDetailsLabel = feed().showCardDetails
+    ? "Hide information under cards" : "Show information under cards";
+  cardDetailsButton.title = cardDetailsLabel;
+  cardDetailsButton.setAttribute("aria-label", cardDetailsLabel);
+  cardDetailsButton.setAttribute("aria-pressed", String(feed().showCardDetails));
+  document.body.classList.toggle("hide-card-details", !feed().showCardDetails);
   $("autoplay-videos").checked = feed().autoplayVideos;
   $("hide-viewed").checked = feed().hideViewed;
   $("group-posts").checked = feed().groupPosts;
@@ -2636,6 +3066,9 @@ function renderBrowsingLevelNote() {
       SYNC_FAILURE_NOTES[accountBrowsingReason] || "the setting could not be read"
     }), so the last known one applies.`;
   }
+  if (browsingLevelRefreshPending) {
+    note.textContent += " Refresh the feed when you want to apply the new level.";
+  }
   note.title = `Set the browsing level on ${host}; MultiHub follows it.`;
 }
 
@@ -2654,7 +3087,7 @@ function renderHiddenCreators() {
       config.settings.hiddenCreators = config.settings.hiddenCreators.filter((name) => name !== username);
       await saveConfig(config);
       renderHiddenCreators();
-      applyLocalFilters();
+      applyLocalFilters({ reason: "hidden-creator-restore" });
     });
     item.append(label, restore);
     list.append(item);
@@ -2670,7 +3103,7 @@ async function switchHub(feedId) {
   renderHubs();
   renderSources();
   syncFeedControls();
-  startFeed({ clearImmediately: true });
+  startFeed({ clearImmediately: true, reason: "hub-switch" });
 }
 
 function bindHubs() {
@@ -2781,7 +3214,7 @@ function bindHubs() {
     renderHubManager();
     renderSources();
     syncFeedControls();
-    startFeed({ clearImmediately: true });
+    startFeed({ clearImmediately: true, reason: "hub-manager-delete" });
   });
   $("hub-manager-import").addEventListener("click", () => $("hub-manager-import-file").click());
   $("hub-manager-import-file").addEventListener("change", async (event) => {
@@ -2799,15 +3232,22 @@ function bindSettings() {
     ? `Embedded MultiHub links stay on ${embeddedHost}` : "Choose where Civitai links open";
   syncFeedControls();
 
+  $("reset-scroll-diagnostics").addEventListener("click", () => {
+    resetScrollDiagnostics();
+    $("scroll-diagnostics-output").hidden = true;
+    $("scroll-diagnostics-status").textContent = "Reset. Reproduce the jump, then copy the diagnostics.";
+  });
+  $("copy-scroll-diagnostics").addEventListener("click", copyScrollDiagnostics);
+
   $("global-sort").addEventListener("change", async (e) => {
     feed().globalSort = e.target.value;
     await saveConfig(config);
-    startFeed();
+    startFeed({ reason: "sort-change" });
   });
   $("period").addEventListener("change", async (e) => {
     feed().period = e.target.value;
     await saveConfig(config);
-    startFeed();
+    startFeed({ reason: "period-change" });
   });
   for (const [id, property] of [
     ["media-type", "mediaType"],
@@ -2817,28 +3257,30 @@ function bindSettings() {
     $(id).addEventListener("change", async (e) => {
       feed()[property] = e.target.value;
       await saveConfig(config);
-      applyLocalFilters();
+      applyLocalFilters({ reason: `${property}-change` });
     });
   }
   $("density").addEventListener("change", async (e) => {
     feed().density = e.target.value;
     document.body.classList.toggle("compact", feed().density === "compact");
     await saveConfig(config);
-    rebuildRendered();
+    rebuildRendered({ preserveAnchor: true, reason: "density-change" });
+  });
+  $("card-details-toggle").addEventListener("click", async () => {
+    feed().showCardDetails = !feed().showCardDetails;
+    await saveConfig(config);
+    syncFeedControls();
+    rebuildRendered({ preserveAnchor: true, reason: "card-details-change" });
   });
   $("autoplay-videos").addEventListener("change", async (e) => {
     feed().autoplayVideos = e.target.checked;
     await saveConfig(config);
-    for (const video of grid.querySelectorAll("video")) {
-      if (!feed().autoplayVideos) video.pause();
-      mediaObserver.unobserve(video);
-      mediaObserver.observe(video);
-    }
+    syncVisibleVideoPlayback();
   });
   $("hide-viewed").addEventListener("change", async (e) => {
     feed().hideViewed = e.target.checked;
     await saveConfig(config);
-    applyLocalFilters();
+    applyLocalFilters({ reason: "hide-viewed-change" });
   });
   $("clear-viewed").addEventListener("click", async () => {
     if (!await askConfirmation(
@@ -2849,7 +3291,7 @@ function bindSettings() {
     feed().viewedIds = [];
     viewedIdSet = new Set();
     await saveConfig(config);
-    applyLocalFilters();
+    applyLocalFilters({ reason: "clear-viewed-history" });
   });
   $("hidden-creator-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -2861,7 +3303,7 @@ function bindSettings() {
     $("hidden-creator-input").value = "";
     await saveConfig(config);
     renderHiddenCreators();
-    applyLocalFilters();
+    applyLocalFilters({ reason: "hidden-creator-add" });
   });
   $("link-domain").addEventListener("change", async (e) => {
     if (embeddedHost) {
@@ -2875,7 +3317,7 @@ function bindSettings() {
     clearModelCache();
     await syncBrowsingLevelsFromCivitai();
     renderBrowsingLevelNote();
-    startFeed();
+    startFeed({ reason: "link-domain-change" });
   });
   $("api-key").addEventListener("change", async (e) => {
     config.settings.apiKey = e.target.value.trim();
@@ -2892,7 +3334,7 @@ function bindSettings() {
   });
   $("refresh").addEventListener("click", () => {
     resetCivitaiCapabilities();
-    startFeed();
+    startFeed({ refreshData: true, reason: "manual-refresh" });
   });
 }
 
@@ -2958,7 +3400,7 @@ function bindAddSource() {
     $("source-input").value = "";
     renderHubs();
     renderSources();
-    startFeed();
+    startFeed({ reason: "source-add" });
   });
   $("remove-api-key").addEventListener("click", async () => {
     config.settings.apiKey = "";
@@ -2969,7 +3411,7 @@ function bindAddSource() {
     resetCivitaiCapabilities();
     await saveConfig(config);
     setStatus("API key removed from local and session extension storage.");
-    startFeed();
+    startFeed({ reason: "api-key-remove" });
   });
 }
 
@@ -2997,7 +3439,10 @@ function bindPanels() {
     $("sidebar-toggle").setAttribute("aria-expanded", String(!collapsed));
     localStorage.setItem("cmh-sidebar-collapsed", String(collapsed));
     clearTimeout(sidebarResizeTimer);
-    sidebarResizeTimer = setTimeout(() => rebuildRendered({ preserveAnchor: true }), 220);
+    sidebarResizeTimer = setTimeout(() => rebuildRendered({
+      preserveAnchor: true,
+      reason: "sidebar-resize",
+    }), 220);
   };
   setSidebarCollapsed(localStorage.getItem("cmh-sidebar-collapsed") === "true");
   $("sidebar-toggle").addEventListener("click", () => {
@@ -3039,7 +3484,7 @@ function bindPanels() {
   $("group-posts").addEventListener("change", async (e) => {
     feed().groupPosts = e.target.checked;
     await saveConfig(config);
-    applyLocalFilters();
+    applyLocalFilters({ reason: "group-posts-change" });
   });
   $("sources-toggle").addEventListener("click", () => {
     const expanded = $("sources-toggle").getAttribute("aria-expanded") !== "true";
@@ -3060,7 +3505,7 @@ function bindBulkSources() {
     await saveConfig(config);
     renderHubs();
     renderSources();
-    startFeed();
+    startFeed({ reason: move ? "bulk-source-move" : "bulk-source-copy" });
   }
   $("source-manage").addEventListener("click", () => {
     sourceManageMode = !sourceManageMode;
@@ -3072,7 +3517,7 @@ function bindBulkSources() {
     for (const source of feed().sources) source.enabled = enable;
     await saveConfig(config);
     renderSources();
-    startFeed();
+    startFeed({ reason: "bulk-source-toggle" });
   });
   $("bulk-select-all").addEventListener("click", () => {
     selectedSourceIds = new Set(feed().sources.map((source) => source.id));
@@ -3096,7 +3541,7 @@ function bindBulkSources() {
     await saveConfig(config);
     renderHubs();
     renderSources();
-    startFeed();
+    startFeed({ reason: "bulk-source-remove" });
   });
 }
 
@@ -3132,40 +3577,110 @@ function bindShare() {
   });
 }
 
-// Sources can be added from civitai pages while this tab is open; keep in sync.
+function sourceFetchSignature(source) {
+  const identity = { type: source.type, enabled: source.enabled !== false };
+  if (source.type === "user") identity.username = source.username;
+  else if (source.type === "model") {
+    identity.modelId = source.modelId;
+    identity.versionIds = source.versionIds || [];
+  } else if (source.type === "collection") identity.collectionId = source.collectionId;
+  return identity;
+}
+
+function feedFetchSignature(candidate) {
+  const current = activeFeed(candidate);
+  const scope = embeddedHost || "standalone";
+  return JSON.stringify({
+    activeFeedId: candidate.activeFeedId,
+    // Labels, aliases, cached version names and source IDs do not change a
+    // request. Excluding them prevents a storage normalization pass from
+    // restarting a feed that the reader is already scrolling through.
+    sources: current.sources.map(sourceFetchSignature),
+    globalSort: current.globalSort,
+    period: current.period,
+    linkDomain: embeddedHost || candidate.settings.linkDomain,
+    apiKey: candidate.settings.apiKey,
+    maxVersionsPerModel: candidate.settings.maxVersionsPerModel,
+    browsingLevels: candidate.settings.browsingLevelsByDomain?.[scope] || [],
+  });
+}
+
+function feedDisplaySignature(candidate) {
+  const current = activeFeed(candidate);
+  return JSON.stringify({
+    activeFeedId: candidate.activeFeedId,
+    mediaType: current.mediaType,
+    generationFilter: current.generationFilter,
+    hideViewed: current.hideViewed,
+    aspectRatio: current.aspectRatio,
+    density: current.density,
+    showCardDetails: current.showCardDetails,
+    groupPosts: current.groupPosts,
+    hiddenCreators: candidate.settings.hiddenCreators,
+  });
+}
+
+// Sources can be added from Civitai pages while this panel is open. Storage
+// changes are precise enough to synchronize directly; a generic focus reload
+// used to turn ordinary tab switching into a destructive full feed restart.
 chrome.storage.onChanged.addListener((changes, area) => {
   const relevantLocal = area === "local" && (
     changes.feeds || changes.settings || changes.activeFeedId || changes.defaultFeedId || changes.apiKey
   );
   const relevantSession = area === "session" && changes.apiKey;
-  if ((!relevantLocal && !relevantSession) || document.hasFocus()) return;
-  reloadFromStorage();
+  if (!relevantLocal && !relevantSession) return;
+  const changedKeys = Object.keys(changes).sort();
+  recordScrollDiagnostic("storage-change", { area, changedKeys });
+  reloadFromStorage({ area, changedKeys }).catch((error) => {
+    recordScrollDiagnostic("storage-reload-error", {
+      area,
+      changedKeys,
+      errorName: error?.name || "Error",
+    });
+  });
 });
-window.addEventListener("focus", reloadFromStorage);
 
-async function reloadFromStorage() {
+async function reloadFromStorage({ area = "unknown", changedKeys = [] } = {}) {
   if (!config) return;
+  recordScrollDiagnostic("storage-reload-start", { area, changedKeys });
   const fresh = await loadConfig();
-  const feedsChanged = JSON.stringify(fresh.feeds) !== JSON.stringify(config.feeds)
-    || fresh.activeFeedId !== config.activeFeedId
-    || fresh.defaultFeedId !== config.defaultFeedId;
+  const feedsChanged = JSON.stringify(fresh.feeds) !== JSON.stringify(config.feeds);
+  const activeFeedChanged = fresh.activeFeedId !== config.activeFeedId;
+  const defaultFeedChanged = fresh.defaultFeedId !== config.defaultFeedId;
   const settingsChanged = JSON.stringify(fresh.settings) !== JSON.stringify(config.settings);
-  if (!feedsChanged && !settingsChanged) return;
-  const requiresRefetch = ["apiKey", "maxVersionsPerModel"]
-    .some((key) => fresh.settings[key] !== config.settings[key]);
+  const fetchChanged = feedFetchSignature(fresh) !== feedFetchSignature(config);
+  const displayChanged = feedDisplaySignature(fresh) !== feedDisplaySignature(config);
+  if (!feedsChanged && !activeFeedChanged && !defaultFeedChanged && !settingsChanged) {
+    recordScrollDiagnostic("storage-reload-result", {
+      area,
+      changedKeys,
+      outcome: "no-config-difference",
+    });
+    return;
+  }
   const apiKeyChanged = fresh.settings.apiKey !== config.settings.apiKey;
-  const browsingLevelsChanged = JSON.stringify(fresh.settings.browsingLevelsByDomain)
-    !== JSON.stringify(config.settings.browsingLevelsByDomain);
+  recordScrollDiagnostic("storage-reload-result", {
+    area,
+    changedKeys,
+    outcome: fetchChanged ? "refetch" : displayChanged ? "local-rebuild" : "controls-only",
+    feedsChanged,
+    activeFeedChanged,
+    defaultFeedChanged,
+    settingsChanged,
+    fetchChanged,
+    displayChanged,
+    apiKeyChanged,
+  });
   config = fresh;
   if (apiKeyChanged) resetCivitaiCapabilities();
-  renderHubs();
-  renderSources();
+  if (feedsChanged || activeFeedChanged || defaultFeedChanged) renderHubs();
+  if (feedsChanged || activeFeedChanged) renderSources();
   syncFeedControls();
-  if (feedsChanged || requiresRefetch || browsingLevelsChanged) startFeed();
-  else {
-    applyLocalFilters();
-    rebuildRendered();
-  }
+  if (fetchChanged) startFeed({ reason: "storage-fetch-signature" });
+  else if (displayChanged) applyLocalFilters({
+    preserveAnchor: true,
+    reason: "storage-display-signature",
+  });
 }
 
 function bindLightbox() {
@@ -3183,7 +3698,7 @@ function bindLightbox() {
   });
   $("retry-errors").addEventListener("click", () => {
     resetCivitaiCapabilities();
-    startFeed();
+    startFeed({ refreshData: true, reason: "retry-errors" });
   });
   $("lightbox-comment-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3287,7 +3802,7 @@ function bindSourceEditor() {
     closeSourceEditor();
     renderHubs();
     renderSources();
-    startFeed();
+    startFeed({ reason: "source-edit" });
   });
 }
 
@@ -3313,12 +3828,17 @@ function bindSourceEditor() {
     bindAddSource();
     bindBulkSources();
     bindShare();
-    startFeed();
-    // Best-effort and asynchronous: the feed starts on the stored levels and
-    // restarts only if Civitai reports a different maturity setting.
+    recordScrollDiagnostic("diagnostics-session-start", {
+      recoveredEventCount: scrollDiagnostics.length,
+    });
+    gridGeometryBaseline = gridMetrics();
+    startFeed({ reason: "initial-load" });
+    // Best-effort and asynchronous: the feed starts on the stored levels. If
+    // Civitai reports a change, advertise it without replacing a feed that the
+    // reader may already have scrolled through; Refresh applies it explicitly.
     syncBrowsingLevelsFromCivitai().then((changed) => {
+      if (changed) browsingLevelRefreshPending = true;
       renderBrowsingLevelNote();
-      if (changed) startFeed();
       watchCivitaiBrowsingLevel();
     }).catch((error) => console.warn("Could not sync Civitai browsing levels", error));
   } catch (error) {

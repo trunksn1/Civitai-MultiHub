@@ -2,6 +2,35 @@
 
 All notable changes to MultiHub will be documented here.
 
+## 0.13.0 - 2026-08-19
+
+### Fixed
+
+Bug fixes following user feedback:
+
+- Prevented the feed from refreshing or jumping back to the top during scrolling, focus changes,
+  responsive layout changes, and incremental loading. Necessary refreshes now retain the visible
+  card and reuse nearby media elements instead of discarding the reader's position and buffered
+  videos.
+- Reaction controls now perform the selected reaction through the signed-in Civitai session instead
+  of opening the image page or silently doing nothing. Tipping remains the action that opens the
+  image on Civitai.
+- Video-heavy creator feeds display an initial 15 items sooner, prepare the next 15 before the reader
+  reaches them, use poster-first optimized playback, and avoid restarting downloads during ordinary
+  feed synchronization.
+- The permanent center play/pause overlay now fades while a video is playing and returns only for
+  interaction or keyboard focus.
+- Removed the broken bottom-right MultiHub launcher from the signed-in user's own profile while
+  retaining every Add-to-MultiHub source action.
+- Stabilized Add-to-MultiHub placement across responsive Civitai layouts. Model actions now stay in
+  the native action card, including compact model pages without a Create button, and creator actions
+  remain below Tip, Chat, and Visit Shop.
+
+### Changed
+
+- Added a sidebar information toggle that hides card details and actions independently of compact
+  grid density, reducing visual clutter without removing the information permanently.
+
 ## 0.12.5 - 2026-08-19
 
 ### Changed
