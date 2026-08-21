@@ -86,8 +86,25 @@ test("normalizeConfig repairs stored values and deduplicates sources", () => {
   assert.equal(config.feeds[0].period, "AllTime");
   assert.equal(config.feeds[0].generationFilter, "all");
   assert.equal(config.feeds[0].showCardDetails, true);
+  assert.equal(config.feeds[0].autoplayAllVisibleVideos, false);
   assert.equal(config.feeds[0].sources.length, 1);
   assert.equal(config.activeFeedId, "hub");
+});
+
+test("simultaneous visible-video autoplay is opt-in per hub and survives persistence", () => {
+  const config = normalizeConfig({
+    feeds: [{
+      id: "hub", name: "Video wall", autoplayAllVisibleVideos: true, sources: [],
+    }],
+  });
+  assert.equal(config.feeds[0].autoplayVideos, true);
+  assert.equal(config.feeds[0].autoplayAllVisibleVideos, true);
+  assert.equal(persistentConfig(config).feeds[0].autoplayAllVisibleVideos, true);
+
+  const migrated = normalizeConfig({
+    feeds: [{ id: "old", name: "Existing hub", sources: [] }],
+  });
+  assert.equal(migrated.feeds[0].autoplayAllVisibleVideos, false);
 });
 
 test("card information visibility is independent from grid density and survives normalization", () => {

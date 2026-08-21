@@ -11,6 +11,9 @@ CORE TEST FLOW (NO ACCOUNT OR API KEY REQUIRED)
 5. On a public Civitai creator, model, or image-collection page, click “Add … to MultiHub” and choose the hub.
 6. Return to the MultiHub tab or embedded panel and confirm that public media loads and can be sorted and filtered.
 
+VIDEO AUTOPLAY MODES
+The resource-saving default autoplays one most-visible video at a time after it reaches 25% visibility. General settings also contains an optional per-hub “Play all visible videos” mode. When explicitly enabled, every video that is at least 15% visible plays simultaneously. The setting is off by default, warns about CPU/GPU and bandwidth use, and remains disabled when autoplay itself is off.
+
 ACCOUNT-BACKED FEATURES
 No Civitai account is required for the core feed workflow. Comments, the reviewer's owned image collections, generation data, and user-triggered writes can use the reviewer's own signed-in Civitai tab. Reactions use that signed-in session first and retain an optional Civitai API key only as a fallback. No reviewer credentials are embedded in the package or required to verify the core purpose.
 

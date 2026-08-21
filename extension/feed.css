@@ -1,571 +1,297 @@
-/* Styled after civitai's dark (Mantine) theme so the feed feels native. */
+# Changelog
 
-* { box-sizing: border-box; }
+All notable changes to MultiHub will be documented here.
 
-html, body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
+## 0.13.2 - 2026-08-21
 
-body {
-  margin: 0;
-  display: flex;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #1a1b1e;
-  color: #c1c2c5;
-}
+### Added
 
-#sidebar {
-  position: relative;
-  width: 300px;
-  flex-shrink: 0;
-  height: 100vh;
-  overflow-y: auto;
-  padding: 16px;
-  background: #25262b;
-  border-right: 1px solid #373a40;
-  transition: width .2s ease, padding .2s ease, border-color .2s ease;
-}
+- Added an opt-in, per-hub **Play all visible videos** setting for users who want every video that
+  is at least 15% visible to play simultaneously. The setting includes a high-resource-use warning
+  and remains disabled while video autoplay itself is off.
 
-.sidebar-toggle {
-  position: fixed; left: 300px; top: 50%; z-index: 30; width: 26px; height: 48px;
-  margin-top: -24px; padding: 0; border: 1px solid #495057; border-left: 0;
-  border-radius: 0 9px 9px 0; background: #25262b; color: #dee2e6;
-  font-size: 24px; line-height: 1; cursor: pointer; box-shadow: 4px 0 12px rgba(0,0,0,.25);
-  transition: left .2s ease, background .15s ease;
-}
-.sidebar-toggle:hover { background: #373a40; }
-body.sidebar-collapsed #sidebar { width: 0; padding-left: 0; padding-right: 0; border-color: transparent; overflow: hidden; }
-body.sidebar-collapsed .sidebar-toggle { left: 0; }
+### Changed
 
-#sidebar h1 { min-width: 0; flex: 1; font-size: 18px; margin: 0 0 16px; color: #fff; }
-.sidebar-title { display: flex; align-items: flex-start; justify-content: space-between; }
-.title-actions { display: flex; flex: 0 0 auto; gap: 4px; }
-#sidebar .sidebar-title .icon-button {
-  width: 34px; margin: -5px 0 0; padding: 5px; background: transparent;
-  border-color: transparent; color: #c1c2c5; font-size: 18px;
-}
-#sidebar .sidebar-title .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; }
-#sidebar .sidebar-title .icon-button:hover { background: #373a40; }
-#sidebar .sidebar-title .card-details-icon { display: grid; height: 34px; place-items: center; }
-#sidebar .sidebar-title .card-details-icon[aria-pressed="false"] {
-  border-color: transparent; background: transparent; color: #868e96;
-}
-#sidebar .sidebar-title .card-details-icon[aria-pressed="true"] {
-  border-color: rgba(51,154,240,.28); background: rgba(34,139,230,.12); color: #4dabf7;
-}
-#sidebar .sidebar-title .card-details-icon[aria-pressed="false"]:hover { background: #373a40; color: #dee2e6; }
-#sidebar .sidebar-title .card-details-icon[aria-pressed="true"]:hover { background: rgba(34,139,230,.2); }
-.card-details-glyph {
-  width: 19px; height: 19px; fill: none; stroke: currentColor;
-  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-}
-/* The browsing level is Civitai's setting, so this only reports what is in
-   force and where it comes from. */
-#sidebar .browsing-note { margin: -8px 0 0; }
-#sidebar h2 {
-  font-size: 11px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: #909296;
-  margin: 20px 0 8px;
-}
+- Kept the existing resource-saving behavior as the default: one most-visible video plays at a
+  time after reaching 25% visibility.
+- Preserved poster-first lazy loading, resized transcoded playback, reduced-motion handling, tab
+  visibility pausing, and explicit manual pauses in both playback modes.
 
-#sidebar input, #sidebar select, #sidebar button, #sidebar textarea {
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  border: 1px solid #373a40;
-  background: #2c2e33;
-  color: #c1c2c5;
-  font-size: 13px;
-}
-#sidebar textarea { resize: vertical; font-family: inherit; }
+## 0.13.1 - 2026-08-19
 
-#sidebar button {
-  background: #228be6;
-  border-color: #228be6;
-  color: #fff;
-  cursor: pointer;
-  font-weight: 600;
-}
-#sidebar button:hover { background: #339af0; }
-#sidebar button.secondary { background: #2c2e33; border-color: #373a40; color: #c1c2c5; font-weight: 400; }
-#sidebar button.secondary:hover { background: #373a40; }
+### Changed
 
-#sidebar label { display: block; font-size: 12px; color: #909296; }
-#sidebar .check-label { display: flex; align-items: center; gap: 7px; margin: 5px 0 9px; color: #c1c2c5; }
-#sidebar .check-label input { width: auto; margin: 0; }
-#sidebar .feed-option-switch {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin: 10px 0 12px; padding: 10px 0; border-top: 1px solid #373a40;
-  color: #dee2e6; cursor: pointer;
-}
-.feed-option-switch-copy { display: grid; gap: 2px; min-width: 0; }
-.feed-option-switch-copy strong { font-size: 12px; font-weight: 650; color: #dee2e6; }
-.feed-option-switch-copy small { font-size: 11px; color: #868e96; }
-#sidebar .feed-option-switch input {
-  appearance: none; position: relative; width: 34px; height: 20px; flex: 0 0 34px;
-  margin: 0; padding: 0; border: 0; border-radius: 999px; background: #5c5f66;
-  cursor: pointer; transition: background .15s ease;
-}
-#sidebar .feed-option-switch input::after {
-  content: ""; position: absolute; width: 16px; height: 16px; top: 2px; left: 2px;
-  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35);
-  transition: transform .15s ease;
-}
-#sidebar .feed-option-switch input:checked { background: #228be6; }
-#sidebar .feed-option-switch input:checked::after { transform: translateX(14px); }
-#sidebar .feed-option-switch input:focus-visible { outline: 2px solid #74c0fc; outline-offset: 2px; }
+- Replaced the ambiguous card-information `i` shortcut with a layout/details icon whose muted and
+  blue-tinted states communicate whether creator and model information is visible.
+- Added a labeled **Creator and model info** switch under Feed options. The switch and header
+  shortcut stay synchronized, use the same per-hub preference, and preserve the visible feed
+  position when the card layout changes.
 
-#sidebar .btn-row { display: flex; gap: 6px; }
-#sidebar .btn-row button { flex: 1; background: #2c2e33; border-color: #373a40; color: #c1c2c5; font-weight: 400; }
-#sidebar .btn-row button:hover { background: #373a40; }
-#hub-select { font-weight: 700; }
-#hub-manage { flex: 2 !important; }
+## 0.13.0 - 2026-08-19
 
-#sidebar .hint { font-size: 11px; color: #909296; margin: 0 0 4px; }
-.source-help { margin: 0 0 8px; font-size: 11px; }
-.source-help summary { color: #74c0fc; cursor: pointer; }
-.source-help-list { display: grid; gap: 7px; margin: 8px 0 0; }
-.source-help-list div { padding-left: 8px; border-left: 2px solid #343a40; }
-.source-help-list dt { color: #dee2e6; font-weight: 700; }
-.source-help-list dd { margin: 2px 0 0; color: #909296; line-height: 1.4; }
-.source-help code { color: #dee2e6; }
-#sidebar .section-toggle {
-  display: flex; align-items: center; gap: 7px; padding: 7px 0; margin: 12px 0 5px;
-  background: transparent; border: 0; color: #909296; font-size: 11px;
-  letter-spacing: .5px; text-transform: uppercase; text-align: left;
-}
-#sidebar .section-toggle:hover { background: transparent; color: #c1c2c5; }
-#sidebar .section-toggle .chevron { margin-left: auto; transition: transform .15s ease; }
-#sidebar .section-toggle[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+### Fixed
 
-#source-list { list-style: none; padding: 0; margin: 4px 0 0; }
-#source-list li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin-bottom: 6px;
-  background: #2c2e33;
-  border: 1px solid #373a40;
-  border-radius: 8px;
-  font-size: 13px;
-}
-#source-list li.disabled { opacity: 0.58; }
-#source-list .select-source,
-#source-list .toggle-source { width: auto; margin: 0; }
-#source-list .select-source[hidden] { display: none; }
-#source-list .toggle-source { appearance: none; width: 30px; height: 17px; flex: 0 0 30px; border: 0; border-radius: 999px; background: #5c5f66; cursor: pointer; position: relative; }
-#source-list .toggle-source::after { content: ""; position: absolute; width: 13px; height: 13px; top: 2px; left: 2px; border-radius: 50%; background: white; transition: transform .15s ease; }
-#source-list .toggle-source:checked { background: #228be6; }
-#source-list .toggle-source:checked::after { transform: translateX(13px); }
-#source-list .source-text { flex: 1; min-width: 0; }
-#source-list .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#source-list .label, #source-list .meta { display: block; }
-#source-list .source-group {
-  padding: 8px 2px 3px; margin: 0; border: 0; background: transparent;
-  color: #868e96; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
-}
-#source-list .meta {
-  max-width: 100%; overflow: hidden; color: #909296; font-size: 11px;
-  text-overflow: ellipsis; white-space: nowrap;
-}
-#source-list .remove {
-  width: auto;
-  margin: 0;
-  padding: 2px 8px;
-  background: transparent;
-  border: none;
-  color: #909296;
-  font-weight: 400;
-}
-#source-list .remove:hover { background: transparent; color: #ff6b6b; }
-#source-list .edit {
-  width: auto; margin: 0; padding: 2px 7px; background: transparent;
-  border: none; color: #909296; font-weight: 400;
-}
-#source-list .edit:hover { background: transparent; color: #4dabf7; }
-#source-toggle-all, #source-manage { margin: 0 0 7px; }
-#sidebar button.danger { color: #ff8787; }
-.source-bulk { margin: 0 0 8px; padding: 8px; border: 1px solid #373a40; border-radius: 8px; background: #202125; }
-.source-bulk[hidden] { display: none; }
+Bug fixes following user feedback:
 
-#status { font-size: 12px; color: #909296; min-height: 1em; }
-.startup-error {
-  display: grid; gap: 3px; margin: 0 0 12px; padding: 9px 10px;
-  border: 1px solid #8f4b4b; border-radius: 8px; background: #3b2528;
-  color: #ffc9c9; font-size: 12px; line-height: 1.35;
-}
-.startup-error[hidden] { display: none; }
-.startup-error strong { color: #fff; }
-.startup-error small { color: #ffa8a8; overflow-wrap: anywhere; }
-.error-panel { margin-top: 10px; padding: 8px; border: 1px solid #5c3b3b; border-radius: 8px; background: #302426; font-size: 12px; }
-.error-panel summary { cursor: pointer; color: #ff8787; font-weight: 700; }
-.error-panel ul { padding-left: 18px; max-height: 150px; overflow-y: auto; }
+- Prevented the feed from refreshing or jumping back to the top during scrolling, focus changes,
+  responsive layout changes, and incremental loading. Necessary refreshes now retain the visible
+  card and reuse nearby media elements instead of discarding the reader's position and buffered
+  videos.
+- Reaction controls now perform the selected reaction through the signed-in Civitai session instead
+  of opening the image page or silently doing nothing. Tipping remains the action that opens the
+  image on Civitai.
+- Video-heavy creator feeds display an initial 15 items sooner, prepare the next 15 before the reader
+  reaches them, use poster-first optimized playback, and avoid restarting downloads during ordinary
+  feed synchronization.
+- The permanent center play/pause overlay now fades while a video is playing and returns only for
+  interaction or keyboard focus.
+- Removed the broken bottom-right MultiHub launcher from the signed-in user's own profile while
+  retaining every Add-to-MultiHub source action.
+- Stabilized Add-to-MultiHub placement across responsive Civitai layouts. Model actions now stay in
+  the native action card, including compact model pages without a Create button, and creator actions
+  remain below Tip, Chat, and Visit Shop.
 
-.settings-overlay {
-  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
-  padding: 24px; background: rgba(0, 0, 0, .7); backdrop-filter: blur(4px);
-}
-.settings-overlay[hidden] { display: none; }
-.settings-dialog {
-  width: min(560px, 100%); max-height: min(760px, calc(100vh - 48px)); overflow: hidden;
-  border: 1px solid #495057; border-radius: 14px; background: #25262b;
-  box-shadow: 0 24px 80px rgba(0,0,0,.65); color: #c1c2c5;
-}
-.settings-header {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;
-  padding: 18px 20px; border-bottom: 1px solid #373a40;
-}
-.settings-header h2 { margin: 0; color: white; font-size: 18px; text-transform: none; letter-spacing: 0; }
-.settings-header p { margin: 4px 0 0; color: #909296; font-size: 12px; }
-#sidebar .settings-header .icon-button {
-  width: 34px; margin: 0; padding: 5px; background: transparent; border-color: transparent;
-  color: #c1c2c5; font-size: 18px;
-}
-#sidebar .settings-header .icon-button:hover { background: #373a40; }
-.settings-tabs { display: flex; gap: 4px; padding: 10px 20px 0; border-bottom: 1px solid #373a40; }
-#sidebar .settings-tabs .settings-tab {
-  width: auto; margin: 0 0 -1px; padding: 9px 12px; border: 0; border-bottom: 2px solid transparent;
-  border-radius: 7px 7px 0 0; background: transparent; color: #909296; font-weight: 600;
-}
-#sidebar .settings-tabs .settings-tab:hover { background: #2c2e33; color: #dee2e6; }
-#sidebar .settings-tabs .settings-tab.active { color: #74c0fc; border-bottom-color: #339af0; }
-.settings-content { padding: 18px 20px 22px; overflow-y: auto; max-height: calc(100vh - 200px); }
-.settings-content label { color: #adb5bd; }
-.settings-panel[hidden] { display: none; }
-.settings-panel h3 { margin: 0 0 5px; color: #f1f3f5; font-size: 14px; }
-.feed-diagnostics { margin: 12px 0; padding: 9px 10px; border: 1px solid #3f4249; border-radius: 8px; background: #2c2e33; }
-.feed-diagnostics summary { cursor: pointer; color: #dee2e6; font-size: 12px; font-weight: 700; }
-.feed-diagnostics .hint { margin: 8px 0; }
-.feed-diagnostics-actions { display: flex; gap: 8px; }
-#sidebar .feed-diagnostics-actions button { width: auto; margin: 0; }
-#scroll-diagnostics-output {
-  width: 100%; min-height: 150px; margin-top: 8px; resize: vertical;
-  font: 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
-}
-#scroll-diagnostics-output[hidden] { display: none; }
-.hub-manager { width: min(620px, 100%); }
-.hub-manager-list { display: grid; gap: 7px; }
-.hub-manager-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid #3f4249; border-radius: 9px; background: #2c2e33; }
-#sidebar .hub-manager-row input { width: auto; margin: 0; }
-#sidebar .hub-manager-default { width: 32px; margin: 0; padding: 4px; border: 0; background: transparent; color: #868e96; font-size: 18px; }
-#sidebar .hub-manager-default:hover, #sidebar .hub-manager-default.active { background: transparent; color: #ffd43b; }
-.hub-manager-name { min-width: 0; overflow: hidden; color: #f1f3f5; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.hub-manager-meta { color: #868e96; font-size: 11px; white-space: nowrap; }
-.hub-manager-actions { flex-wrap: wrap; }
-#sidebar .hub-manager-actions button.danger { border-color: #5c3b3b; background: #302426; }
-#sidebar .hub-manager-actions button:disabled { opacity: .45; cursor: default; }
-.inline-form { display: flex; gap: 8px; margin-top: 10px; }
-#sidebar .inline-form input { flex: 1; margin: 0; }
-#sidebar .inline-form button { width: auto; margin: 0; }
-.hidden-creators-list { list-style: none; padding: 0; margin: 10px 0 0; max-height: 180px; overflow-y: auto; }
-.hidden-creators-list li {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 7px 9px; margin-bottom: 5px; border-radius: 7px; background: #2c2e33;
-  font-size: 12px;
-}
-#sidebar .hidden-creators-list button { width: auto; margin: 0; padding: 2px 7px; background: transparent; border: 0; color: #ff8787; }
+### Changed
 
-/* Feed area: vertical scrolling, JS-balanced masonry columns. */
-#grid {
-  flex: 1;
-  height: 100vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  /* The feed is a nested scroller inside a fixed Civitai iframe. When a fast
-     wheel/touch gesture reaches the temporarily short loading edge, keep the
-     gesture here instead of chaining it to the host page. JS owns anchoring
-     during the rare masonry rebuild, so native anchoring must not fight it. */
-  overscroll-behavior-y: contain;
-  overflow-anchor: none;
-  padding: 16px;
-}
+- Added a sidebar information toggle that hides card details and actions independently of compact
+  grid density, reducing visual clutter without removing the information permanently.
 
-.masonry {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-}
-body.compact #grid { padding: 9px; }
-body.compact .masonry, body.compact .masonry .col { gap: 8px; }
-body.compact .card .info { padding: 6px 8px; }
-body.hide-card-details .card-actions,
-body.hide-card-details .card .info { display: none; }
+## 0.12.5 - 2026-08-19
 
-.masonry .col {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
+### Changed
 
-.sentinel { height: 1px; }
-.skeleton-card { height: 260px; border-radius: 12px; background: linear-gradient(100deg, #25262b 20%, #34363c 40%, #25262b 60%); background-size: 200% 100%; animation: skeleton 1.2s linear infinite; }
-.skeleton-card:nth-child(even) { height: 360px; }
-@keyframes skeleton { to { background-position-x: -200%; } }
+- Minor bug fixes.
 
-@media (prefers-reduced-motion: reduce) {
-  #sidebar, .sidebar-toggle { transition: none; }
-}
+## 0.12.4 - 2026-08-19
 
-.card {
-  position: relative;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #25262b;
-  border: 1px solid #373a40;
-}
-.card-actions { position: static; z-index: 4; display: flex; align-items: center; gap: 3px; min-height: 32px; padding: 4px 7px; border-top: 1px solid #34363d; border-bottom: 1px solid #34363d; background: #1d1e22; opacity: 1; }
-.card-actions button { min-height: 24px; padding: 3px 6px; border: 0; border-radius: 999px; background: transparent; color: #eee; cursor: pointer; font-size: 11px; }
-.card-actions button:hover, .card-actions button.active { background: #228be6; }
-.card-actions .collect { margin-left: auto; }
-.buzz-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; padding: 2px 7px; border: 1px solid rgba(255,212,59,.48); border-radius: 999px; background: rgba(245,159,0,.14); color: #ffd43b; font-size: 10px; font-weight: 750; line-height: 1; text-decoration: none; white-space: nowrap; }
-.card-actions .buzz-badge { display: inline-flex; }
-.buzz-badge:hover, .buzz-badge:focus-visible { border-color: #ffd43b; background: rgba(245,159,0,.28); color: #fff3bf; outline: none; }
-.card.is-new { border-color: #4dabf7; }
-.new-badge {
-  position: absolute; top: 8px; left: 8px; z-index: 1; padding: 3px 7px;
-  border-radius: 999px; background: #228be6; color: white; font-size: 10px; font-weight: 700;
-}
-.card > a { position: relative; }
-.video-play {
-  position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%);
-  width: 52px; height: 52px; display: grid; place-items: center; z-index: 2;
-  border-radius: 50%; background: rgba(0, 0, 0, .68); border: 1px solid rgba(255,255,255,.75);
-  color: white; font-size: 24px; cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,.45);
-  opacity: 1; transition: opacity .16s ease, background .16s ease;
-}
-.video-play:hover { background: rgba(34,139,230,.9); }
-.video-play.is-playing { opacity: 0; }
-.video-play.is-playing.show-on-interaction,
-.video-play.is-playing:focus-visible { opacity: 1; }
-.card a { display: block; }
-.card img,
-.card video {
-  width: 100%;
-  height: auto;
-  display: block;
-  background: #2c2e33;
-}
-.card .info { padding: 8px 12px; font-size: 12px; color: #909296; }
-.card .info a { display: inline; text-decoration: none; }
-.card .info a:hover { text-decoration: underline; }
-.card .info a.user { color: #c1c2c5; font-weight: 600; }
-.card .info .sources {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card .info .sources a { color: #4dabf7; }
-.card .info .made-with a { color: #74c0fc; font-weight: 600; }
-.card .info .made-with-line { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .creator-line { display: flex; align-items: center; min-width: 0; gap: 4px; margin-top: 3px; white-space: nowrap; }
-.card .creator-line .user {
-  flex: 0 0 auto; max-width: calc(100% - 48px); overflow: visible;
-  overflow-wrap: anywhere; text-overflow: clip; white-space: normal;
-}
-.card .creator-line .made-with {
-  display: block; flex: 1 1 0; min-width: 0; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
-}
-.creator-avatar { display: grid; flex: 0 0 auto; width: 20px; height: 20px; place-items: center; overflow: hidden; border: 1px solid #454953; border-radius: 50%; background: #2b3140; color: #b8c7ee; font-size: 9px; font-weight: 800; }
-.creator-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.card-info-signals { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-.card .card-info-badge { display: inline-flex; align-items: center; gap: 3px; min-height: 22px; padding: 2px 6px; border: 1px solid #454953; border-radius: 999px; background: #202228; color: #adb5bd; font-size: 9px; font-weight: 700; line-height: 1; text-decoration: none; }
-.card .card-info-badge svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.card .card-info-badge.remix { border-color: rgba(116,192,252,.45); background: rgba(34,139,230,.13); color: #74c0fc; }
-.card .card-info-badge.remix:hover { background: rgba(34,139,230,.25); text-decoration: none; }
-.card .card-info-badge.prompt { color: #a5d8ff; }
-.card .card-info-badge.resources { color: #b2f2bb; }
-.card .info .stats { color: #909296; margin-top: 4px; }
-.card .hide-creator {
-  border: 0; background: transparent; color: #909296; padding: 0; cursor: pointer; font-size: 11px;
-}
-.card .hide-creator:hover { color: #ff8787; text-decoration: underline; }
-.source-hover-target { text-decoration-line: underline !important; text-decoration-style: dotted !important; text-decoration-thickness: 1px !important; text-underline-offset: 3px; }
-.source-hover-menu { position: fixed; z-index: 2300; width: min(292px, calc(100vw - 16px)); max-height: min(420px, calc(100vh - 16px)); overflow-y: auto; padding: 7px; border: 1px solid #4b4e57; border-radius: 10px; background: #22242a; color: #dee2e6; box-shadow: 0 12px 36px rgba(0,0,0,.65); font-size: 12px; }
-.source-hover-menu[hidden] { display: none; }
-.source-hover-title { display: block; padding: 5px 7px 7px; color: #adb5bd; font-size: 10px; text-transform: uppercase; }
-.source-hover-header { display: flex; align-items: center; gap: 6px; padding: 3px 4px 7px; border-bottom: 1px solid #373a40; }
-.source-hover-header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source-hover-header button { flex: 0 0 auto; padding: 2px 7px; border: 0; border-radius: 6px; background: transparent; color: #74c0fc; cursor: pointer; font-size: 18px; }
-.source-hover-item { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; overflow: hidden; border: 0; border-radius: 7px; background: transparent; color: #dee2e6; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.source-hover-item:hover, .source-hover-item:focus-visible { background: #34373e; color: #fff; outline: none; }
-.source-hover-create { margin-top: 6px; border: 1px solid rgba(55,178,77,.5); color: #b2f2bb; }
-.source-hover-create-form { display: flex; gap: 5px; margin-top: 5px; }
-.source-hover-create-form[hidden] { display: none; }
-.source-hover-create-form input, .source-hover-search { box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid #4b4e57; border-radius: 7px; outline: 0; background: #18191e; color: #f1f3f5; font: inherit; }
-.source-hover-create-form input:focus, .source-hover-search:focus { border-color: #4c6ef5; box-shadow: 0 0 0 2px rgba(76,110,245,.18); }
-.source-hover-create-form button { flex: 0 0 auto; padding: 6px 8px; border: 1px solid #2f9e44; border-radius: 7px; background: #2b8a3e; color: #fff; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
-.source-hover-divider { display: flex; align-items: center; gap: 6px; margin: 7px 3px 5px; color: #868e96; font-size: 9px; letter-spacing: .6px; text-transform: uppercase; }
-.source-hover-divider::after { content: ""; flex: 1; height: 1px; background: #3a3d46; }
-.source-hover-hub-list { max-height: 175px; overflow-y: auto; padding-right: 2px; scrollbar-gutter: stable; }
-.source-hover-empty { display: block; padding: 8px; color: #868e96; font-size: 11px; }
+### Changed
 
-.empty {
-  color: #909296;
-  font-size: 14px;
-  padding: 40px;
-  text-align: center;
-}
-.post-count-badge { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 3px 7px; border-radius: 999px; background: rgba(0,0,0,.72); color: #fff; font-size: 10px; font-weight: 700; }
+- Minor bug fixes.
 
-.lightbox { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 28px 70px; background: rgba(0,0,0,.88); backdrop-filter: blur(5px); }
-.lightbox[hidden] { display: none; }
-.lightbox-card { width: min(1280px, 100%); height: min(850px, calc(100vh - 56px)); display: grid; grid-template-columns: minmax(0, 1fr) 340px; overflow: hidden; border: 1px solid #495057; border-radius: 14px; background: #1f2024; box-shadow: 0 24px 90px rgba(0,0,0,.7); }
-.lightbox-media { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; background: #111; }
-.lightbox-media img, .lightbox-media video {
-  display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain;
-}
-.lightbox-info { overflow-y: auto; padding: 22px; border-left: 1px solid #373a40; }
-.lightbox-info h2 { margin: 0 0 5px; color: #fff; font-size: 18px; }
-.lightbox-info h2 a { color: #fff; text-decoration: none; }
-.lightbox-info h2 a:hover { color: #74c0fc; text-decoration: underline; }
-.lightbox-info p { white-space: pre-wrap; overflow-wrap: anywhere; color: #adb5bd; font-size: 12px; }
-.lightbox-info .lightbox-note { margin: 18px 0 0; padding: 9px 11px; border-radius: 8px; background: #2c2e33; color: #909296; }
-.lightbox-byline-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.lightbox-byline-row #lightbox-byline { flex: 1; min-width: 0; margin: 0; }
-.lightbox-action-bar { display: flex; align-items: center; gap: 5px; margin-top: 8px; padding: 5px 0; border-top: 1px solid #34363d; border-bottom: 1px solid #34363d; }
-.lightbox-reactions { display: flex; flex: 1; flex-wrap: nowrap; gap: 3px; margin: 0; min-width: 0; }
-.lightbox-reactions button, .lightbox-reactions a { padding: 4px 7px; border: 0; border-radius: 999px; background: transparent; color: #c1c2c5; font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
-.lightbox-reactions button:hover, .lightbox-reactions button.active { background: #373a40; color: #fff; }
-.lightbox-reactions button:disabled { opacity: .55; cursor: wait; }
-.lightbox-action-status { min-height: 1.2em; margin: 5px 0 0 !important; color: #909296 !important; font-size: 11px !important; }
-.lightbox-buzz { flex: 0 0 auto; }
-.lightbox-collect { flex: 0 0 auto; margin: 0; padding: 6px 9px; border: 1px solid #495057; border-radius: 8px; background: #2c2e33; color: #dee2e6; cursor: pointer; }
-/* The picker is opened from inside the lightbox, so it has to stack above it —
-   at the shared overlay z-index it opened behind the image it was adding. */
-#collection-picker-overlay { z-index: 2100; }
-.collection-picker { width: min(460px, 100%); }
-#collection-picker-list { display: grid; gap: 7px; }
-.collection-picker-option { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid #495057; border-radius: 8px; background: #2c2e33; color: #dee2e6; cursor: pointer; }
-.collection-picker-option:hover { background: #373a40; }
-.collection-picker-option input { width: 17px; height: 17px; margin: 0; accent-color: #228be6; }
-.collection-picker-option span { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-#collection-picker-save { padding: 8px 18px; border: 1px solid #228be6; border-radius: 8px; background: #228be6; color: #fff; font-weight: 700; cursor: pointer; }
-#collection-picker-save:disabled { opacity: .5; cursor: default; }
-.lightbox-media img { cursor: pointer; }
-.preview-source-button { position: absolute; z-index: 3; right: 12px; bottom: 12px; padding: 7px 10px; border: 1px solid rgba(255,255,255,.4); border-radius: 999px; background: rgba(24,25,29,.9); color: #fff; cursor: pointer; opacity: 0; transform: translateY(4px); transition: opacity .15s ease, transform .15s ease; }
-.lightbox-media:hover .preview-source-button, .preview-source-button:focus-visible, .preview-source-button[aria-expanded="true"] { opacity: 1; transform: none; }
-.lightbox-generation-card { margin-top: 10px; padding: 11px; border: 1px solid #353840; border-radius: 10px; background: #24262c; }
-.lightbox-generation-card > h3 { margin: 0 0 8px; color: #f1f3f5; font-size: 14px; }
-.lightbox-generation-section { padding: 8px 0; border-top: 1px solid #383b43; }
-.lightbox-generation-section[hidden] { display: none; }
-.lightbox-generation-section h3, .lightbox-generation-section strong { margin: 0 0 6px; color: #c9cbd2; font-size: 11px; }
-.lightbox-generation-section p { margin: 0; font-size: 11px; line-height: 1.4; }
-.lightbox-detail-section { margin-top: 20px; }
-.lightbox-detail-section[hidden] { display: none; }
-.lightbox-detail-section h3 { margin: 0 0 8px; color: #f1f3f5; font-size: 14px; }
-.lightbox-resources, .lightbox-comments { list-style: none; padding: 0; margin: 0; }
-.lightbox-resources li { margin: 0; padding: 6px 0; border-bottom: 1px solid #34373e; font-size: 11px; }
-.lightbox-resources li:last-child { border-bottom: 0; }
-.lightbox-comments li { margin-bottom: 7px; padding: 8px 10px; border-radius: 8px; background: #2c2e33; font-size: 12px; }
-.lightbox-resources li { display: flex; align-items: center; gap: 8px; }
-.lightbox-resource-main { flex: 1; min-width: 0; }
-.lightbox-resources a { display: block; color: #74c0fc; font-weight: 600; text-decoration: none; }
-.lightbox-resources a:hover { text-decoration: underline; }
-.lightbox-resource-meta, .lightbox-comment-meta { display: block; margin-top: 3px; color: #868e96; font-size: 11px; }
-.lightbox-resource-strength { flex: 0 0 auto; min-width: 34px; padding: 4px 7px; border: 1px solid #339af0; border-radius: 7px; background: #1c4d73; color: #e7f5ff; font-weight: 700; text-align: center; }
-.lightbox-comments p { margin: 5px 0 0; color: #dee2e6; line-height: 1.45; }
-.lightbox-comments a { color: #74c0fc; font-weight: 600; text-decoration: none; }
-.lightbox-comments a:hover { text-decoration: underline; }
-.comment-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.comment-avatar { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: #373a40; }
-.comment-avatar-initial { display: grid; place-items: center; color: #c1c2c5; font-size: 11px; font-weight: 700; }
-.comment-author { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.lightbox-comments .lightbox-comment-meta { flex: 1 1 auto; margin: 0; }
-.comment-reactions { flex: 0 0 auto; color: #868e96; font-size: 11px; }
-.comment-body > :first-child { margin-top: 4px; }
-.comment-body p { margin: 4px 0 0; }
-.comment-body ul, .comment-body ol { margin: 4px 0 0; padding-left: 18px; color: #dee2e6; }
-.comment-body code { padding: 1px 4px; border-radius: 4px; background: #202125; font-size: 11px; }
-.comment-mention { color: #91a7ff !important; }
-.comment-reply-toggle { flex: 0 0 auto; padding: 2px 7px; border: 1px solid #495057; border-radius: 999px; background: transparent; color: #adb5bd; font: inherit; font-size: 11px; cursor: pointer; }
-.comment-reply-toggle:hover { background: #373a40; color: #fff; }
-.comment-reply-form { margin-top: 8px; }
-.comment-reply-form textarea { width: 100%; resize: vertical; padding: 7px 9px; border: 1px solid #495057; border-radius: 8px; background: #202125; color: #dee2e6; font: inherit; font-size: 12px; }
-.comment-reply-actions { display: flex; gap: 6px; margin-top: 6px; }
-.comment-reply-actions button { padding: 5px 10px; border: 0; border-radius: 7px; background: #228be6; color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
-.comment-reply-actions button.secondary { border: 1px solid #495057; background: transparent; color: #adb5bd; }
-.comment-reply-actions button:disabled { opacity: .6; cursor: wait; }
-.comment-reply-status:empty { display: none; }
-.lightbox-comments .comment-reply-status { margin: 6px 0 0; color: #909296; font-size: 11px; }
-/* Replies are nested under the comment they answer, so a discussion is
-   distinguishable from a run of unrelated comments at a glance. */
-.comment-replies { list-style: none; margin: 8px 0 0; padding: 0 0 0 11px; border-left: 2px solid #495057; }
-.lightbox-comments li.reply { margin-bottom: 6px; background: #26272c; }
-.lightbox-comments li.reply:last-child { margin-bottom: 0; }
-.lightbox-comment-form { margin-top: 9px; }
-.lightbox-comment-form[hidden] { display: none; }
-.lightbox-comment-form textarea { width: 100%; resize: vertical; padding: 8px 10px; border: 1px solid #495057; border-radius: 8px; background: #202125; color: #dee2e6; font: inherit; font-size: 12px; }
-.lightbox-comment-form button { margin-top: 6px; padding: 6px 10px; border: 0; border-radius: 7px; background: #228be6; color: #fff; cursor: pointer; }
-.lightbox-section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; }
-.lightbox-info dl { display: grid; grid-template-columns: minmax(68px, auto) 1fr; gap: 3px 8px; margin: 0; font-size: 10px; }
-.lightbox-info dt { overflow: hidden; color: #66bdf3; font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }.lightbox-info dd { margin: 0; overflow: hidden; color: #dee2e6; text-overflow: ellipsis; white-space: nowrap; }
-.lightbox-info > a { display: inline-block; margin-top: 18px; color: #74c0fc; font-weight: 700; text-decoration: none; }
-.lightbox-close, .lightbox-nav { position: fixed; z-index: 2001; border: 0; background: rgba(37,38,43,.9); color: #fff; cursor: pointer; }
-.lightbox-close { top: 18px; right: 18px; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; }
-.lightbox-nav { top: 50%; transform: translateY(-50%); width: 46px; height: 70px; border-radius: 9px; font-size: 38px; }.lightbox-nav.prev { left: 14px; }.lightbox-nav.next { right: 14px; }
-@media (max-width: 800px) { .lightbox { padding: 55px 10px 10px; }.lightbox-card { grid-template-columns: 1fr; grid-template-rows: minmax(45vh, 1fr) auto; }.lightbox-info { max-height: 38vh; border-left: 0; border-top: 1px solid #373a40; }.lightbox-nav { display: none; } }
-.source-editor { width: min(620px, 100%); }
-.source-editor input, .source-editor select, .source-editor button { padding: 7px 10px; border-radius: 8px; border: 1px solid #373a40; background: #2c2e33; color: #c1c2c5; font-size: 13px; }
-.source-editor label { display: block; color: #adb5bd; font-size: 12px; }
-.source-editor label > input, .source-editor label > select { width: 100%; margin: 4px 0 12px; }
-.source-editor button[type="submit"] { background: #228be6; border-color: #228be6; color: #fff; font-weight: 700; }
-.source-transfer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
-.source-transfer-actions button { cursor: pointer; }
-.source-transfer-panel { margin-top: 10px; padding: 10px; border: 1px solid #373a40; border-radius: 9px; background: #202125; }
-.source-transfer-panel[hidden], .source-transfer-create[hidden] { display: none; }
-.source-transfer-panel h3 { margin: 0 0 8px; color: #dee2e6; font-size: 13px; }
-.source-transfer-destinations { display: grid; gap: 6px; max-height: 180px; overflow-y: auto; }
-.source-transfer-destinations button { width: 100%; text-align: left; cursor: pointer; }
-#source-transfer-create-toggle { width: 100%; margin-top: 8px; cursor: pointer; }
-.source-transfer-create { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin-top: 8px; }
-.source-transfer-create input { min-width: 0; }
-#source-transfer-create-confirm { border-color: #2f9e44; background: #2b8a3e; color: #fff; cursor: pointer; }
-.version-list { max-height: 220px; overflow-y: auto; margin: 8px 0 14px; padding: 8px; border: 1px solid #373a40; border-radius: 8px; }
-.version-list label { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px; color: #dee2e6; }
-.version-list input { width: auto !important; margin: 0 !important; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid #373a40; }
-#sidebar .dialog-actions button { width: auto; margin: 0; }
-.form-error { color: #ff8787; font-size: 12px; }
+## 0.12.3 - 2026-08-13
 
-/* Browser-native prompt/confirm dialogs are unreliable when an extension page
-   is embedded in Firefox. Keep every interaction inside the extension page. */
-.app-dialog-overlay { z-index: 2400; padding: 14px; }
-.app-dialog { width: min(440px, 100%); }
-.app-dialog-content { display: grid; gap: 14px; }
-.app-dialog-message {
-  margin: 0; color: #dee2e6; font-size: 13px; line-height: 1.45;
-  overflow-wrap: anywhere; white-space: pre-wrap;
-}
-.app-dialog label { display: grid; gap: 6px; color: #adb5bd; font-size: 12px; }
-.app-dialog input {
-  width: 100%; padding: 8px 10px; border: 1px solid #495057; border-radius: 8px;
-  outline: 0; background: #202125; color: #f1f3f5; font: inherit;
-}
-.app-dialog input:focus { border-color: #4dabf7; box-shadow: 0 0 0 2px rgba(77,171,247,.2); }
-.app-dialog-choices { display: grid; gap: 7px; max-height: min(320px, 45vh); overflow-y: auto; }
-.app-dialog-choices[hidden] { display: none; }
-.app-dialog-choice {
-  width: 100%; padding: 9px 11px; border: 1px solid #495057; border-radius: 8px;
-  background: #2c2e33; color: #dee2e6; font: inherit; font-size: 13px;
-  font-weight: 600; text-align: left; cursor: pointer;
-}
-.app-dialog-choice:hover, .app-dialog-choice:focus-visible {
-  border-color: #4dabf7; background: #34373e; color: #fff; outline: 0;
-}
-.app-dialog .dialog-actions button {
-  width: auto; margin: 0; padding: 7px 13px; border: 1px solid #228be6;
-  border-radius: 8px; background: #228be6; color: #fff; font: inherit;
-  font-size: 13px; font-weight: 700; cursor: pointer;
-}
-.app-dialog .dialog-actions button.secondary {
-  border-color: #495057; background: #2c2e33; color: #c1c2c5; font-weight: 400;
-}
+### Fixed
+
+- Corrected card attribution so checkpoint sources do not repeat the same checkpoint as both the
+  source and the resolved resource.
+- Kept creator names readable while shortening only long model/checkpoint attribution where card
+  width is limited.
+- Removed redundant source-type prefixes from collection, checkpoint, LoRA, and embedding labels.
+
+## 0.12.2 - 2026-08-13
+
+### Added
+
+- Added a dedicated hub manager for defaults, renaming, multi-delete, and single- or multi-hub
+  export/import.
+- Added source aliases, enable/disable controls, bulk management, and copy/move actions with inline
+  destination-hub creation.
+- Added model-version choices from Civitai pages and preserved version display names in source rows.
+
+### Changed
+
+- Improved the placement and reliability of Add-to-MultiHub actions on creator, model, collection,
+  and homepage sections.
+- Restricted collection pickers to owned image collections and added explicit multi-select Save.
+
+## 0.12.1 - 2026-08-12
+
+### Added
+
+- Added NEW markers, viewed-state filters, creator avatars, checkpoint attribution, generation
+  signals, Remix availability, and always-visible reaction/Buzz controls to image cards.
+- Added hub search, alphabetical hub selection, and inline named-hub creation to source pickers.
+- Added source actions from creators, models, collections, generation resources, preview sources,
+  commenter names, Featured Images, and public collection headings.
+
+### Changed
+
+- Reorganized the image preview around prompts, resources, generation details, collection actions,
+  reactions, and comment threads.
+
+## 0.11.2 - 2026-08-12
+
+### Added
+
+- Policy-scoped Chrome Web Store and Firefox Add-ons packages limited to `civitai.com` and
+  PG/PG-13 browsing levels.
+- Firefox MV3 event-page metadata and install-time data-collection declarations.
+- Reproducible store-package verification and public store privacy-scope documentation.
+
+## 0.11.1 - 2026-08-08
+
+### Added
+
+- Every comment in the image preview has a **Reply**, which posts into that comment's own child
+  thread — where Civitai puts a reply, so it joins the discussion on the site too. Replying to a
+  reply opens with a mention of the person being answered, as the site does inside a shared thread.
+
+### Changed
+
+- The note under the comments no longer says "Open on Civitai to reply", which was both a box in
+  the way and, now that replying works here, wrong. It appears only when part of the thread is not
+  shown, and a posted comment is confirmed by appearing rather than by a message.
+
+## 0.11.0 - 2026-08-08
+
+### Changed
+
+- The browsing level is now Civitai's setting alone. MultiHub's own level picker is gone: the level
+  is chosen on Civitai's control — the eye icon in the site header — and the panel mirrors it, the
+  same way it already did for a level changed on the site. Everything `0.10.0` added to push a level
+  from the panel back to the account (the write, its retries, the confirm-by-re-read step and the
+  conflict resolver that decided which side won) has been removed with it. The write reached
+  Civitai's database but never reliably reached the page the user was looking at, and one setting
+  with two owners was the source of the reverts.
+- The sidebar now states which levels are in force and where they came from, so an unexpectedly
+  narrow or wide feed points at the setting that decides it.
+- The standalone MultiHub tab follows the account's level too, not only the embedded panel.
+
+### Fixed
+
+- Civitai's browsing-level menu no longer opens *behind* the MultiHub panel. Their popover asks for
+  `z-index: calc(var(--dialog-z-index) + 2)`, and that variable only exists while one of their own
+  dialogs is open — everywhere else the declaration is invalid, so the menu fell back to no z-index
+  at all and the panel covered it. The panel now supplies the value the site intends, while it is
+  open, and lifts any site popover left without one.
+- Image previews show comments and generation details without an API key. Both are now read through
+  the signed-in Civitai tab, like collections already were, so a logged-in user sees what the site
+  would show them. An API key remains a fallback for when no Civitai tab is open, and is still
+  required to post a comment or a reaction.
+- The image preview has a comment section again. It was hidden whenever the feed's own comment count
+  for that image was zero, which is most images, so it looked as though the section had gone; it is
+  now always present and says when there is nothing to show.
+- The collection picker opens on top of the image preview instead of behind it. It shares the
+  settings-overlay stacking level, which sits below the preview it is opened from.
+- Comments, generation details, reactions, collection actions and model-version lookups now all
+  follow the Civitai host being browsed. They used the stored link-domain preference, so an embedded
+  `civitai.red` panel could ask `civitai.com` — which does not serve that media — for them.
+
+### Added
+
+- The comment section keeps the shape a discussion has on Civitai: replies are nested under the
+  comment they answer, so a conversation is distinguishable from a run of unrelated remarks. Each
+  entry carries the author's profile picture and name, the local time and its reaction count.
+  Comment HTML is rebuilt from an allowlist rather than inserted as markup, mentions and links are
+  preserved, and a profile picture rated above the levels being browsed is replaced by an initial.
+- Leaving a comment needs no API key either. It is posted as the account signed in to the open
+  Civitai tab, which is the same bar the site sets; the comment box appears whenever there is a
+  session to post as. A key remains the fallback for a standalone tab with no Civitai page open.
+
+### Removed
+
+- The **Copy prompt** button in the image preview, which did not work.
+
+## 0.10.0 - 2026-08-07
+
+### Fixed
+
+- Mature media is visible again on `civitai.red`. Every API request was hardcoded to
+  `civitai.com`, which clamps responses to the SFW tier regardless of the requested browsing level,
+  so R, X and XXX could never be returned no matter what the user selected. Feed, model, collection,
+  comment, generation-detail and pagination requests now all follow the host being browsed.
+- Media whose browsing level cannot be determined is shown instead of silently filtered out.
+- The browsing level chosen on Civitai is now actually applied. Requests send Civitai's
+  `browsingLevel` integer bitmask, which the API filters on exactly, instead of the legacy `nsfw`
+  enum that could only say "up to this tier" and left the rest to client-side filtering — so an
+  XXX-only selection now returns XXX only.
+- The `showNsfw` master switch is honoured the way the site honours it
+  (`showNsfw ? browsingLevel : PG`), read from `user.getSettings` because Civitai patches that
+  immediately on change while the session lags behind its JWT refresh.
+- The level is now inherited continuously, not only at load. Embedded in Civitai the panel is a live
+  mirror of the site's setting: it re-reads while on screen, on panel open and on tab focus, so
+  changing the level on Civitai updates the feed within seconds without reopening MultiHub, and the
+  change refetches the hub. Previously an already-open panel kept the level it started with.
+- The level can now be changed from the panel and is written back to the Civitai account, so the
+  site's own image feed shows the same thing. Writes are pinned to the host being browsed and
+  tagged with its Civitai colour, because the level is stored per domain. The boxes stay read-only
+  only while Civitai's "show mature content" switch is off, since the site clamps to PG then.
+- Setting a browsing level in the panel now sticks and reaches Civitai. The panel kept a second
+  copy of the level taken from the session and chose between it and the stored selection with
+  flags, so any read that failed — a timeout, a moment without a signed-in tab — quietly switched
+  the panel back to the site's value and swallowed the click, which is why the sync only ever
+  appeared to run from Civitai to MultiHub. There is now one source of truth that only the user and
+  a level actually changed on Civitai write to.
+- The level boxes are no longer disabled when the session cannot be read. A level set in the panel
+  always governs the feed; the note says whether it also reached the account.
+- A browsing-level write that returns a Cloudflare 504 is no longer treated as a plain failure.
+  Civitai saves the level and only then awaits the session refresh that times out, so the change
+  usually landed and only the acknowledgement was lost. The write is retried with backoff and, if it
+  still fails, the account is re-read to see whether it took before an error is reported.
+- A write that could not be confirmed no longer causes the next poll to undo the choice: the last
+  level actually observed on the site is restored, so an unchanged site value is not mistaken for a
+  change made there.
+- A level chosen in the panel no longer snaps back to Civitai's. The poll could not tell "the site
+  changed" from "the site has not caught up with the write yet", and took the site's value in both
+  cases, so the site won every time. It now adopts the site's level only when it has actually
+  changed there since the previous read, and a failed write is reported rather than rolled back —
+  the last human decision wins on whichever side it was made.
+- A level written from the panel now reaches the open Civitai page. The write updates Civitai's
+  database, but the already-loaded page keeps the level in a client store hydrated at page load, so
+  its own feed kept showing the old value until the tab was focused again. The write now nudges the
+  focus/visibility listeners NextAuth and React Query refetch on, so the site re-reads the session
+  by itself.
+- The panel states the outcome of a write ("Saved to civitai.red", or why it failed) instead of
+  leaving a silent revert as the only signal.
+- When the level cannot be inherited the panel now says which reason applies instead of silently
+  falling back to its own selection.
+- Scrolling no longer stalls and snaps back up. The load sentinel reports intersection *changes*
+  only, so a round that appended too few cards to push it out of view produced no further event and
+  loading stopped with the reader already at the bottom; it is now re-armed while it stays in view.
+- Re-ranking the feed under a reactions/comments sort no longer throws the reader back to the top:
+  that rebuild now anchors on a visible card, and a lost anchor restores the previous position
+  instead of leaving the grid clamped at zero.
+
+### Changed
+
+- MultiHub now inherits the browsing level the user chose on Civitai, read from their signed-in
+  session on the host being browsed, instead of applying its own PG default. A level changed on
+  Civitai propagates here; a narrower choice made afterwards in MultiHub is preserved.
+- The browsing-level picker is no longer locked when embedded in `civitai.com`; it offers PG and
+  PG-13 there and every level up to XXX on `civitai.red`, and states which host serves what.
+- Public image-collection sources no longer require an API key when a signed-in Civitai tab is open.
+- Collection metadata and media, the collection picker, and add-to-collection actions now use an
+  open Civitai tab's signed-in session first, with a scoped API key retained as an optional fallback.
+
+- Collection feeds now decode both SuperJSON and devalue tRPC responses during Civitai's staged
+  serializer migration. Explicit feed refresh/retry also clears a stale disabled-capability state.
+
+- Reworked the README around a two-minute Chrome installation path, five-step quick start,
+  manual update/removal guidance, permissions, privacy, API-key scopes, and preview status.
+- Corrected the privacy permission summary to match the manifest's two Civitai host permissions.
+
+- Finalized the initial Store identity as **MultiHub for Civitai - Unofficial** version `0.9.0`.
+- API keys now remain session-only by default.
+- Added an explicit **Remember this API key on this device** option for the full build.
+- Clarified that remembered keys are stored unencrypted in the browser profile.
+- Documented the planned full, Chrome Store, and Firefox Store release variants.
+- Revised the first Chrome submission to use the complete feature set with a Mature disclosure;
+  a restricted package is now a fallback after specific reviewer feedback.
+- Classified internal Civitai tRPC integrations as experimental dependencies pending platform
+  confirmation.
+- Added reproducible Chrome/GitHub release ZIPs, SHA-256 reports, and package verification tests.
+- Added the MultiHub media-stream icon in 16, 32, 48, and 128 px extension/action sizes plus a
+  1024 px store-assets master.
+- Hardened experimental Civitai tRPC features with normalized authentication, permission,
+  rate-limit, server, schema, and unsupported-procedure errors.
+- Internal API failures now disable only the affected capability for the current page session;
+  creator and model feeds remain usable.
+- Reaction counts and selected states now update immediately and roll back if the single mutation
+  request fails or cannot be confirmed.
+- Feed responses now normalize irregular Civitai username values and retry temporary malformed
+  successful responses without letting one item terminate its source stream.
+
+### Security
+
+- Unchecking the remember option removes the persistent key without ending the current session.
+- Restricted signed-in collection access to four allowlisted operations routed through the existing
+  Civitai content script; no cookie permission or cookie-value access was added.
+- Removing a key clears both local and session extension storage.
+- Added public privacy and security documentation.
+- Removed unnecessary privileged access to the Civitai media CDN, narrowed public extension
+  resources to `feed.html`, and restricted background messages to this extension's own senders.
+- Added a shared page-ownership guard so separately installed MultiHub variants do not inject
+  duplicate Civitai ribbons, overlays, or floating controls.
+- Added regression checks ensuring user API keys never appear in surfaced error text.
+- Handled source failures remain visible in MultiHub's retry panel without being registered as
+  uncaught extension errors by Chrome.

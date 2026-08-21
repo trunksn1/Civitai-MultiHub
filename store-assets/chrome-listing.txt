@@ -19,10 +19,11 @@ WHAT YOU CAN DO
 • Sort and filter the combined feed by time, media, shape, prompt, resources, and metadata.
 • Add creators, models, and public image collections while browsing Civitai.
 • Open prompts, resources, generation information, comments, and supported Civitai actions without losing your place.
+• Keep the resource-saving single-video autoplay default, or opt into playing every video that is at least 15% visible.
 • Export and import hubs without including API keys or viewed history.
 
 GET STARTED
-1. Install MultiHub and refresh an open civitai.com tab.
+1. Install MultiHub and refresh an open civitai.com or civitai.red tab.
 2. Open MultiHub and add creators, models, LoRAs, versions, or public image collections to a hub.
 3. Return later and use NEW or viewed filters to see what changed.
 
@@ -31,11 +32,11 @@ MultiHub requires no separate account and has no analytics, advertising, data br
 
 Core creator and model feeds need no API key. Some optional account-backed features use the Civitai session already open in the browser. An optional, revocable Civitai API key can be used for reactions and as a fallback for supported account-backed features.
 
-The Chrome Web Store edition works only on civitai.com and follows that site's PG/PG-13 browsing range. It does not request access to civitai.red.
+The Chrome Web Store edition works on civitai.com and civitai.red. Civitai.com serves the SFW range; civitai.red can expose the browsing levels selected in the user's Civitai account, including mature content.
 
 Permissions:
 • Storage — saves hubs, preferences, viewed-item state, hidden creators, and an optional API key when the user explicitly chooses to remember it.
-• civitai.com — adds the MultiHub interface to Civitai pages and accesses Civitai data needed to build feeds and perform user-requested actions.
+• civitai.com and civitai.red — add the MultiHub interface to Civitai pages and access Civitai data needed to build feeds and perform user-requested actions.
 
 MultiHub is an independent, unofficial project and is not affiliated with or endorsed by Civitai.
 
@@ -55,7 +56,7 @@ PERMISSION JUSTIFICATION: STORAGE
 Stores the user's hubs, sources, aliases, feed preferences, viewed-item state, hidden creators, and optional Civitai API key. The key is session-only by default and is stored locally only after the user enables “Remember this API key on this device.”
 
 PERMISSION JUSTIFICATION: HOST ACCESS
-Access to https://civitai.com/* is required to add the MultiHub interface to Civitai pages, read the page context when the user adds a source, request Civitai feed and image data, and perform Civitai actions the user explicitly requests. The extension does not run on unrelated sites.
+Access to https://civitai.com/* and https://civitai.red/* is required to add the MultiHub interface to Civitai pages, read the page context when the user adds a source, request Civitai feed and image data, and perform Civitai actions the user explicitly requests. The extension does not run on unrelated sites.
 
 REMOTE CODE
 No. All executable HTML, CSS, and JavaScript is packaged with the extension. Civitai responses provide data and media, not executable extension code.
@@ -67,4 +68,4 @@ LIMITED USE CERTIFICATIONS
 Data is used only to provide the extension's single purpose and user-facing features. It is not sold, used for advertising, used for credit decisions, or transferred for unrelated purposes. The developer does not allow humans to read the data.
 
 DISTRIBUTION
-Public, all regions, no payment, not marked Mature. Store package is limited to civitai.com (PG/PG-13).
+Public, all regions, no payment, marked Mature because the civitai.red host can expose adult content according to the user's Civitai browsing-level selection.

@@ -144,6 +144,11 @@
         </select>
       </label>
       <label class="check-label"><input id="autoplay-videos" type="checkbox" /> Autoplay videos near viewport</label>
+      <div class="playback-option">
+        <label class="check-label"><input id="autoplay-all-visible-videos" type="checkbox"
+          aria-describedby="autoplay-all-visible-videos-hint" /> Play all visible videos</label>
+        <p id="autoplay-all-visible-videos-hint" class="hint">Plays every video that is at least 15% visible. High CPU/GPU and bandwidth use.</p>
+      </div>
       <label class="check-label"><input id="hide-viewed" type="checkbox" /> Hide previously viewed images</label>
       <label class="check-label"><input id="group-posts" type="checkbox" /> Group images from the same post</label>
       <button id="clear-viewed" class="secondary">Clear viewed history</button>

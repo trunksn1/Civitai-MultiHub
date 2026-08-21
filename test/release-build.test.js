@@ -177,6 +177,11 @@ test("source UI keeps the corrected hub picker and preview contracts", async () 
   assert.match(feedScript, /const LOAD_AHEAD_PX = 3200/);
   assert.match(feedScript, /await waitForGridScrollIdle\(signal\)/);
   assert.match(feedScript, /media\.preload = "none"/);
+  assert.match(feedHtml, /id="autoplay-all-visible-videos"/);
+  assert.match(feedHtml, /at least 15% visible/);
+  assert.match(feedScript, /autoplayAllVisibleVideos/);
+  assert.match(feedScript, /feed\(\)\.autoplayVideos[\s\S]+feed\(\)\.autoplayAllVisibleVideos/);
+  assert.match(feedScript, /threshold: \[0, 0\.15, 0\.25, 0\.5, 0\.75, 1\]/);
   assert.match(feedScript, /if \(previewedRunId === run\) return/);
   assert.match(feedScript, /startFeed\(\{ refreshData: true, reason: "manual-refresh" \}\)/);
   assert.doesNotMatch(feedScript, /if \(changed\) startFeed\(\)/);

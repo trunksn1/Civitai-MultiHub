@@ -16,15 +16,16 @@ Key features:
 • Sort and filter media, group posts, hide viewed items, and hide creators.
 • Add a creator, model, or public image collection directly from its Civitai page.
 • View generation details and comments, then perform explicitly requested Civitai actions.
+• Keep the resource-saving single-video autoplay default, or opt into playing every video that is at least 15% visible.
 • Export and import hubs without exporting API keys or viewed history.
 
-This Firefox Add-ons edition works only on civitai.com and follows its PG/PG-13 browsing range. It does not request access to civitai.red.
+This Firefox Add-ons edition works on civitai.com and civitai.red. Civitai.com serves the SFW range; civitai.red can expose the browsing levels selected in the user's Civitai account, including mature content.
 
 Some account-backed features use the Civitai session already open in Firefox. An optional, revocable Civitai API key can be used for reactions and as a fallback for account-backed features. Requests go directly from Firefox to Civitai over HTTPS. MultiHub has no analytics, advertising, or developer-operated application server.
 
 Requested access:
 • Browser storage keeps hubs and preferences locally.
-• civitai.com access adds the MultiHub interface, loads the selected feeds, and performs actions the user requests.
+• civitai.com and civitai.red access adds the MultiHub interface, loads the selected feeds, and performs actions the user requests.
 
 MultiHub is an independent, unofficial project and is not affiliated with or endorsed by Civitai.
 

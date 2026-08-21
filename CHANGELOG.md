@@ -2,6 +2,21 @@
 
 All notable changes to MultiHub will be documented here.
 
+## 0.13.2 - 2026-08-21
+
+### Added
+
+- Added an opt-in, per-hub **Play all visible videos** setting for users who want every video that
+  is at least 15% visible to play simultaneously. The setting includes a high-resource-use warning
+  and remains disabled while video autoplay itself is off.
+
+### Changed
+
+- Kept the existing resource-saving behavior as the default: one most-visible video plays at a
+  time after reaching 25% visibility.
+- Preserved poster-first lazy loading, resized transcoded playback, reduced-motion handling, tab
+  visibility pausing, and explicit manual pauses in both playback modes.
+
 ## 0.13.1 - 2026-08-19
 
 ### Changed

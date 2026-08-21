@@ -45,6 +45,7 @@ const DEFAULT_FEED = {
   density: "comfortable", // comfortable | compact
   showCardDetails: true,
   autoplayVideos: true,
+  autoplayAllVisibleVideos: false,
   groupPosts: false,
   viewedIds: [],
   lastVisitedAt: null,
@@ -237,6 +238,7 @@ export function normalizeFeed(value, { strict = false } = {}) {
     density: DENSITIES.has(value.density) ? value.density : DEFAULT_FEED.density,
     showCardDetails: value.showCardDetails !== false,
     autoplayVideos: value.autoplayVideos !== false,
+    autoplayAllVisibleVideos: value.autoplayAllVisibleVideos === true,
     groupPosts: value.groupPosts === true,
     viewedIds: Array.isArray(value.viewedIds)
       ? [...new Set(value.viewedIds.map(positiveInteger).filter(Boolean))].slice(-LIMITS.viewedIds)

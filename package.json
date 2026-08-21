@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/storage.test.js && node test/merge.test.js && node test/action-state.test.js && node test/content-filters.test.js && node test/api.test.js && node test/background.test.js && node test/release-build.test.js",
+    "test": "node test/storage.test.js && node test/merge.test.js && node test/action-state.test.js && node test/content-filters.test.js && node test/video-playback.test.js && node test/api.test.js && node test/background.test.js && node test/release-build.test.js",
     "build:chrome": "node scripts/build-release.mjs chrome",
     "build:firefox": "node scripts/build-release.mjs firefox",
     "build:full": "node scripts/build-release.mjs full",

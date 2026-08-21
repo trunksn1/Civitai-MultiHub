@@ -33,6 +33,7 @@ export const PACKAGE_FILES = Object.freeze([
   "manifest.json",
   "merge.js",
   "storage.js",
+  "video-playback.js",
 ]);
 
 const VARIANTS = Object.freeze({
