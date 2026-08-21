@@ -18,9 +18,12 @@ WHAT YOU CAN DO
 • See NEW markers and filter out media you already viewed.
 • Sort and filter the combined feed by time, media, shape, prompt, resources, and metadata.
 • Add creators, models, and public image collections while browsing Civitai.
+• Search creators, models, and public image collections with category-aware autocomplete.
+• On civitai.red, optionally save a per-hub content profile that is applied when that hub opens.
 • Open prompts, resources, generation information, comments, and supported Civitai actions without losing your place.
 • Keep the resource-saving single-video autoplay default, or opt into playing every video that is at least 15% visible.
-• Export and import hubs without including API keys or viewed history.
+• Export and import hubs without including API keys, viewed history, or saved Civitai.red profiles
+  unless those profiles are explicitly included.
 
 GET STARTED
 1. Install MultiHub and refresh an open civitai.com or civitai.red tab.

@@ -67,6 +67,7 @@ export const MAX_HUBS = LIMITS.feeds;
 const SORTS = new Set(["newest", "oldest", "reactions", "comments"]);
 const PERIODS = new Set(["AllTime", "Year", "Month", "Week", "Day"]);
 const DOMAINS = ALLOWED_CIVITAI_HOSTS;
+const MATURITY_PROFILE_HOST = "civitai.red";
 const BROWSING_LEVELS = new Set(ALLOWED_BROWSING_LEVELS);
 const MEDIA_TYPES = new Set(["all", "image", "video"]);
 const GENERATION_FILTERS = new Set([
@@ -74,6 +75,40 @@ const GENERATION_FILTERS = new Set([
 ]);
 const ASPECT_RATIOS = new Set(["all", "portrait", "landscape", "square"]);
 const DENSITIES = new Set(["comfortable", "compact"]);
+
+function levelsAvailableOnHost(host) {
+  return host === "civitai.red"
+    ? [...ALLOWED_BROWSING_LEVELS]
+    : ALLOWED_BROWSING_LEVELS.filter((level) => level <= 2);
+}
+
+function normalizeSavedBrowsingLevelsByDomain(value, { strict = false } = {}) {
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    if (strict) throw new Error("Invalid saved hub content levels");
+    return null;
+  }
+  if (strict && Object.keys(value).some((host) => host !== MATURITY_PROFILE_HOST)) {
+    throw new Error("Saved hub content profiles are supported only on civitai.red");
+  }
+  const normalized = {};
+  for (const host of [MATURITY_PROFILE_HOST]) {
+    if (value[host] === undefined) continue;
+    if (!Array.isArray(value[host])) {
+      if (strict) throw new Error("Saved hub content levels must be an array");
+      continue;
+    }
+    const available = levelsAvailableOnHost(host);
+    const raw = value[host].map(Number);
+    const levels = [...new Set(raw.filter((level) => available.includes(level)))]
+      .sort((a, b) => a - b);
+    if (strict && (levels.length === 0 || levels.length !== raw.length)) {
+      throw new Error("Invalid saved hub content levels");
+    }
+    if (levels.length > 0) normalized[host] = levels;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
 
 function boundedText(value, max, fallback = "") {
   return typeof value === "string" ? value.trim().slice(0, max) || fallback : fallback;
@@ -247,6 +282,13 @@ export function normalizeFeed(value, { strict = false } = {}) {
       ? value.lastVisitedAt : null,
     sources: [],
   };
+  const savedBrowsingLevelsByDomain = normalizeSavedBrowsingLevelsByDomain(
+    value.savedBrowsingLevelsByDomain,
+    { strict }
+  );
+  if (savedBrowsingLevelsByDomain) {
+    feed.savedBrowsingLevelsByDomain = savedBrowsingLevelsByDomain;
+  }
   for (const source of inputSources) {
     const normalized = normalizeSource(source, { strict });
     if (!normalized) continue;
@@ -382,6 +424,20 @@ export function activeFeed(config) {
   return config.feeds.find((f) => f.id === config.activeFeedId) || config.feeds[0];
 }
 
+export function savedBrowsingLevelsForHub(feed, host) {
+  if (host !== MATURITY_PROFILE_HOST) return null;
+  const levels = feed?.savedBrowsingLevelsByDomain?.[host];
+  return Array.isArray(levels) && levels.length > 0 ? [...levels] : null;
+}
+
+export function effectiveHubBrowsingLevels(feed, host, accountLevels) {
+  const available = levelsAvailableOnHost(host);
+  const inherited = [...new Set((Array.isArray(accountLevels) ? accountLevels : [])
+    .map(Number).filter((level) => available.includes(level)))].sort((a, b) => a - b);
+  const saved = savedBrowsingLevelsForHub(feed, host);
+  return saved ? inherited.filter((level) => saved.includes(level)) : inherited;
+}
+
 // Auto-detect what the user pasted: a civitai model/user/collection URL, a
 // numeric model id, @username, or a plain username. A model URL carrying
 // ?modelVersionId=N adds only that version. Returns a source draft or null.
@@ -460,10 +516,21 @@ export function mergeSourceIntoFeed(feed, draft) {
   return { status: "merged", source: existing };
 }
 
-function exportableFeed(feed) {
+function exportableFeed(feed, { includeMaturityProfiles = false } = {}) {
   const { id, viewedIds, lastVisitedAt, ...rest } = feed;
   rest.sources = feed.sources.map(({ id: sourceId, ...source }) => source);
+  if (!includeMaturityProfiles) delete rest.savedBrowsingLevelsByDomain;
   return rest;
+}
+
+export function buildFeedsExport(feeds, options = {}) {
+  if (!Array.isArray(feeds) || feeds.length === 0) {
+    throw new Error("Select at least one hub to export");
+  }
+  if (feeds.length === 1) {
+    return { format: "CMH1", feed: exportableFeed(feeds[0], options) };
+  }
+  return { format: "CMH2", feeds: feeds.map((feed) => exportableFeed(feed, options)) };
 }
 
 function downloadExport(data, filename) {
@@ -477,26 +544,24 @@ function downloadExport(data, filename) {
   URL.revokeObjectURL(a.href);
 }
 
-export function exportFeeds(feeds) {
-  if (!Array.isArray(feeds) || feeds.length === 0) {
-    throw new Error("Select at least one hub to export");
-  }
+export function exportFeeds(feeds, options = {}) {
+  const data = buildFeedsExport(feeds, options);
   if (feeds.length === 1) {
     const [feed] = feeds;
     downloadExport(
-      { format: "CMH1", feed: exportableFeed(feed) },
+      data,
       `${feed.name.replace(/[^\w-]+/g, "_") || "feed"}.multihub.json`,
     );
     return;
   }
   downloadExport(
-    { format: "CMH2", feeds: feeds.map(exportableFeed) },
+    data,
     `multihub-${feeds.length}-hubs.multihub.json`,
   );
 }
 
-export function exportFeed(feed) {
-  exportFeeds([feed]);
+export function exportFeed(feed, options = {}) {
+  exportFeeds([feed], options);
 }
 
 function importedFeed(value) {

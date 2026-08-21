@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 19 August 2026
+Last updated: 22 August 2026
 
 ## Overview
 
@@ -20,7 +20,8 @@ updated packages are submitted and approved. The data flows described below are 
 MultiHub uses browser extension storage for:
 
 - Hub names, sources, source aliases, selected model versions, and enabled states.
-- Feed sorting, filtering, density, video, grouping, and browsing-level preferences.
+- Feed sorting, filtering, density, video, grouping, and browsing-level preferences, including
+  optional Civitai.red content profiles that the user explicitly saves on a hub.
 - Viewed-image identifiers and last-visit timestamps.
 - The global hidden-creator list.
 - Interface preferences and the preferred Civitai link domain.
@@ -34,9 +35,16 @@ When a Civitai tab is open, MultiHub can use that tab's existing signed-in sessi
 collection metadata and media, list writable collections, add an image after the user explicitly
 chooses a collection, post a comment or reply the user typed and asked to post, read the comments (and the
 replies to them) and generation details of an image the user opens, and read the browsing level the
-user selected on that Civitai host so the feed shows the same maturity range the site would. Only
-adding to a collection and posting a comment write anything, and each needs an explicit click; the
-browsing level is only ever read, never written. The browser attaches the session cookie to
+user selected on that Civitai host so the feed shows the same maturity range the site would.
+
+Content profiles are available only on `civitai.red`. If the user intentionally saves one on a hub,
+selecting or opening that hub sends one content-settings mutation through the matching signed-in
+Civitai.red tab before loading the feed. It sets the saved browsing-level bitmask and enables
+Civitai's mature-content switch so that mask is effective. Civitai.com and hubs without a saved
+profile only read and follow Civitai. MultiHub serializes hub-triggered writes,
+does not blindly retry an ambiguous mutation, and reads the setting back for confirmation. Adding
+to a collection, posting a comment, and applying a saved hub profile are the account-writing
+operations. The browser attaches the session cookie to
 same-origin Civitai requests. MultiHub does not request Chrome's cookie permission and does not
 read, copy, store, export, or log the cookie value.
 
@@ -72,6 +80,7 @@ To build feeds and perform user-requested actions, MultiHub sends HTTPS requests
 browser to Civitai. Depending on the feature, those requests can include:
 
 - Creator names, model IDs, model-version IDs, collection IDs, image IDs, and post IDs.
+- Source autocomplete terms entered under Creators, Models, or Collections.
 - Feed order, period, media, pagination, and browsing-level parameters.
 - The optional API key in an HTTP authorization header.
 - For session-backed collection reads and actions, the existing Civitai session credentials that
@@ -110,19 +119,25 @@ preferences. It intentionally excludes:
 - Viewed-image history.
 - Last-visit state.
 - Internal hub and source IDs.
+- Saved per-hub Civitai.red profiles, unless the user explicitly chooses to include them in that
+  export.
 
 An export leaves the browser only when the user chooses to save or share the generated file.
+When an import contains saved Civitai.red profiles, MultiHub asks whether to discard or keep them
+before storing the imported hubs.
 
 ## Retention and deletion
 
 Local hub data remains until the user changes it, clears the relevant setting, or uninstalls the
-extension. Viewed history can be cleared per hub.
+extension. Viewed history and intentionally saved Civitai.red profiles can be cleared per hub.
 
 The **Remove API key** control clears both local and session extension copies and disables the
 remember option. Uninstalling the extension removes its browser-managed extension storage.
 
-Deleting local extension data cannot delete reactions, comments, or collection changes already
-submitted to Civitai. Those must be managed through the user's Civitai account.
+Deleting local extension data cannot delete reactions, comments, collection changes, or the last
+content-level setting already submitted to Civitai. Those must be managed through the user's
+Civitai account. Clearing a hub's saved profile stops future automatic writes from that hub but does
+not restore an earlier account setting.
 
 ## Permissions
 

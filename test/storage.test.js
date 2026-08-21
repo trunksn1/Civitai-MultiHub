@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildFeedsExport,
+  effectiveHubBrowsingLevels,
   importFeed,
   importFeeds,
   loadConfig,
@@ -12,6 +14,7 @@ import {
   parseSourceInput,
   persistentConfig,
   saveConfig,
+  savedBrowsingLevelsForHub,
 } from "../extension/storage.js";
 
 test("new hub names are trimmed and bounded before persistence", () => {
@@ -116,6 +119,98 @@ test("card information visibility is independent from grid density and survives 
   assert.equal(config.feeds[0].density, "compact");
   assert.equal(config.feeds[0].showCardDetails, false);
   assert.equal(persistentConfig(config).feeds[0].showCardDetails, false);
+});
+
+test("sorting, filtering, and display controls persist independently for every hub", () => {
+  const config = normalizeConfig({
+    feeds: [
+      {
+        id: "one", name: "One", globalSort: "comments", period: "Month",
+        mediaType: "video", generationFilter: "resources", hideViewed: true,
+        aspectRatio: "portrait", density: "compact", showCardDetails: false,
+        autoplayVideos: false, autoplayAllVisibleVideos: false, groupPosts: true, sources: [],
+      },
+      {
+        id: "two", name: "Two", globalSort: "oldest", period: "Day",
+        mediaType: "image", generationFilter: "prompt", hideViewed: false,
+        aspectRatio: "landscape", density: "comfortable", showCardDetails: true,
+        autoplayVideos: true, autoplayAllVisibleVideos: true, groupPosts: false, sources: [],
+      },
+    ],
+    activeFeedId: "two",
+  });
+  const stored = persistentConfig(config);
+  assert.deepEqual(
+    stored.feeds.map(({ id, sources, viewedIds, lastVisitedAt, ...hub }) => hub),
+    [
+      {
+        name: "One", globalSort: "comments", period: "Month", mediaType: "video",
+        generationFilter: "resources", hideViewed: true, aspectRatio: "portrait",
+        density: "compact", showCardDetails: false, autoplayVideos: false,
+        autoplayAllVisibleVideos: false, groupPosts: true,
+      },
+      {
+        name: "Two", globalSort: "oldest", period: "Day", mediaType: "image",
+        generationFilter: "prompt", hideViewed: false, aspectRatio: "landscape",
+        density: "comfortable", showCardDetails: true, autoplayVideos: true,
+        autoplayAllVisibleVideos: true, groupPosts: false,
+      },
+    ]
+  );
+});
+
+test("saved hub content profiles are optional, red-only, and have a safe narrowing fallback", () => {
+  const existing = normalizeConfig({ feeds: [{ id: "old", name: "Old", sources: [] }] });
+  assert.equal(existing.feeds[0].savedBrowsingLevelsByDomain, undefined);
+
+  const config = normalizeConfig({
+    feeds: [{
+      id: "saved", name: "Saved", sources: [],
+      savedBrowsingLevelsByDomain: {
+        "civitai.com": [1, 4],
+        "civitai.red": [1, 4, 16],
+      },
+    }],
+  });
+  const hub = config.feeds[0];
+  assert.equal(savedBrowsingLevelsForHub(hub, "civitai.com"), null);
+  assert.deepEqual(savedBrowsingLevelsForHub(hub, "civitai.red"), [1, 4, 16]);
+  assert.deepEqual(hub.savedBrowsingLevelsByDomain, { "civitai.red": [1, 4, 16] });
+  assert.deepEqual(effectiveHubBrowsingLevels(hub, "civitai.red", [1, 2, 4]), [1, 4]);
+  assert.deepEqual(effectiveHubBrowsingLevels(hub, "civitai.red", [2, 8]), []);
+  assert.deepEqual(effectiveHubBrowsingLevels(existing.feeds[0], "civitai.red", [1, 8]), [1, 8]);
+});
+
+test("hub exports omit saved maturity profiles unless explicitly included", () => {
+  const hub = normalizeConfig({
+    feeds: [{
+      id: "saved", name: "Saved", sources: [], viewedIds: [4],
+      savedBrowsingLevelsByDomain: { "civitai.red": [4, 16] },
+    }],
+  }).feeds[0];
+  const ordinary = buildFeedsExport([hub]);
+  assert.equal(ordinary.feed.savedBrowsingLevelsByDomain, undefined);
+  assert.equal(ordinary.feed.viewedIds, undefined);
+  const intentional = buildFeedsExport([hub], { includeMaturityProfiles: true });
+  assert.deepEqual(intentional.feed.savedBrowsingLevelsByDomain, { "civitai.red": [4, 16] });
+  assert.deepEqual(
+    importFeed(JSON.stringify(intentional)).savedBrowsingLevelsByDomain,
+    { "civitai.red": [4, 16] }
+  );
+  assert.throws(() => importFeed(JSON.stringify({
+    format: "CMH1",
+    feed: {
+      ...intentional.feed,
+      savedBrowsingLevelsByDomain: { "civitai.red": [] },
+    },
+  })), /content levels/);
+  assert.throws(() => importFeed(JSON.stringify({
+    format: "CMH1",
+    feed: {
+      ...intentional.feed,
+      savedBrowsingLevelsByDomain: { "civitai.com": [1] },
+    },
+  })), /only on civitai\.red/);
 });
 
 test("default hubs are retained only while they still exist", () => {

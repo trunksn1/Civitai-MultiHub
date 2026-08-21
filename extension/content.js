@@ -7,11 +7,11 @@
 //    the ribbon can't be found (site redesign), later DOM scans retry the integration.
 // 2. On model/LoRA, creator and collection pages, places an "Add to MultiHub"
 //    button under the page's stable native action area. It always asks which hub to add to.
-// 3. Proxies explicitly allowlisted read operations — collections, the browsing
-//    level, image comments and generation data — through the current Civitai
-//    origin. This lets Chrome attach the site's existing session cookies without
-//    exposing those cookies to the extension, so a signed-in user sees what the
-//    site would show them without pasting an API key.
+// 3. Proxies explicitly allowlisted account operations — collection actions,
+//    browsing-level reads and intentional saved-hub writes, image comments and
+//    generation data — through the current Civitai origin. This lets Chrome
+//    attach the site's existing session cookies without exposing those cookies
+//    to the extension.
 // 4. Keeps Civitai's own popovers above the panel while it is open, because
 //    settings such as the browsing level are changed on the site's controls.
 
@@ -180,19 +180,19 @@ function toggleOverlay(container) {
     closeOverlay();
     return;
   }
-  // Civitai's own controls have to stay usable over the panel — the browsing
-  // level is set there, not here.
+  // Civitai's own controls stay usable over the panel. Hubs without a saved
+  // profile follow changes made through that native browsing-level control.
   document.documentElement.setAttribute("data-cmh-panel", "open");
   startLiftingSitePopovers();
-  // The panel mirrors this site's content setting; tell it to re-read on open so
-  // a level changed while it was collapsed applies straight away.
+  // Tell the panel to re-read this site's content setting on open so a level
+  // changed while it was collapsed applies straight away.
   overlay.querySelector("iframe")?.contentWindow?.postMessage({ type: "cmh-panel-shown" }, "*");
 }
 
 // ---------- keeping Civitai's own menus above the panel ----------
 //
-// The browsing level is Civitai's setting, so it is changed on Civitai's control
-// while the panel is open. That menu is a Mantine popover asking for
+// Civitai's own browsing-level control remains available while the panel is
+// open. That menu is a Mantine popover asking for
 // `z-index: calc(var(--dialog-z-index) + 2)`, and that variable only exists while
 // one of their dialogs is open: everywhere else the declaration is invalid, the
 // dropdown falls back to `z-index: auto`, and the panel (z-index 90) covers it.
@@ -961,16 +961,14 @@ function sourceFromHref(href, label = "") {
 }
 
 function sectionContainer(heading) {
-  let fallback = heading.parentElement;
   for (let node = heading.parentElement, depth = 0; node && depth < 6; node = node.parentElement, depth += 1) {
     const imageLinks = node.querySelectorAll('a[href*="/images/"]').length;
-    const sourceLinks = node.querySelectorAll(
-      'a[href*="/user/"], a[href*="/models/"], a[href*="/collections/"]'
-    ).length;
-    if (sourceLinks > 0) fallback = node;
-    if (imageLinks >= 2 && sourceLinks > 0) return node;
+    // Featured cards render their image anchors first and may only add creator/model
+    // links after hover. The smallest ancestor containing the carousel is therefore
+    // a safer section boundary than requiring source links to exist already.
+    if (imageLinks >= 2) return node;
   }
-  return fallback;
+  return heading.parentElement;
 }
 
 function collectionOptionNearHeading(heading, title) {
@@ -1025,7 +1023,125 @@ function collectionOptionFromPageData(title) {
   return null;
 }
 
-function sectionSourceOptions(heading) {
+function sourceOptionKey(source) {
+  return source.type === "user" ? `u:${source.username.toLocaleLowerCase()}`
+    : source.type === "model" ? `m:${source.modelId}:${(source.versionIds || []).join(",")}`
+      : `c:${source.collectionId}`;
+}
+
+function uniqueSourceOptions(options) {
+  const seen = new Set();
+  return options.filter(({ source }) => {
+    const key = sourceOptionKey(source);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 24);
+}
+
+function sectionImageIds(container) {
+  const ids = [];
+  const seen = new Set();
+  for (const link of container.querySelectorAll('a[href*="/images/"]')) {
+    let url;
+    try {
+      url = new URL(link.href, location.origin);
+    } catch {
+      continue;
+    }
+    if (url.origin !== location.origin) continue;
+    const match = url.pathname.match(/^\/images\/(\d+)/i);
+    const id = match ? Number(match[1]) : null;
+    if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= 8) break;
+  }
+  return ids;
+}
+
+function imagePayloadOptions(item) {
+  if (!item || typeof item !== "object") return [];
+  const options = [];
+  const username = typeof item.username === "string" ? item.username.trim()
+    : typeof item.user?.username === "string" ? item.user.username.trim() : "";
+  if (/^[\w.-]+$/u.test(username)) {
+    options.push({ label: `@${username}`, source: { type: "user", username } });
+  }
+
+  const resources = [
+    item.model,
+    ...(Array.isArray(item.models) ? item.models : []),
+    ...(Array.isArray(item.resources) ? item.resources : []),
+    ...(Array.isArray(item.meta?.resources) ? item.meta.resources : []),
+  ].filter(Boolean);
+  for (const resource of resources) {
+    const modelId = Number(resource.modelId ?? resource.model?.id);
+    if (!Number.isSafeInteger(modelId) || modelId <= 0) continue;
+    const versionId = Number(resource.modelVersionId ?? resource.versionId);
+    const source = { type: "model", modelId };
+    if (Number.isSafeInteger(versionId) && versionId > 0) source.versionIds = [versionId];
+    const name = String(resource.modelName || resource.model?.name || resource.name || "").trim();
+    options.push({ label: name || `Model #${modelId}`, source });
+  }
+  return options;
+}
+
+function imagePayloadVersionIds(item) {
+  if (!item || typeof item !== "object") return [];
+  const resources = [
+    ...(Array.isArray(item.resources) ? item.resources : []),
+    ...(Array.isArray(item.meta?.resources) ? item.meta.resources : []),
+  ];
+  return [...new Set([
+    ...(Array.isArray(item.modelVersionIds) ? item.modelVersionIds : []),
+    ...(Array.isArray(item.modelVersionIdsManual) ? item.modelVersionIdsManual : []),
+    ...resources.flatMap((resource) => [resource?.modelVersionId, resource?.versionId]),
+  ].map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))];
+}
+
+async function featuredImageSourceOptions(container) {
+  const imageIds = sectionImageIds(container);
+  if (imageIds.length === 0) return [];
+  const imageResults = await Promise.allSettled(imageIds.map(async (imageId) => {
+    const response = await fetch(`/api/v1/images?imageId=${imageId}&limit=1`, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`Image metadata returned HTTP ${response.status}`);
+    const data = await response.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    return items.find((item) => Number(item?.id) === imageId) || items[0] || null;
+  }));
+  const items = imageResults
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value);
+  const options = items.flatMap(imagePayloadOptions);
+  const versionIds = [...new Set(items.flatMap(imagePayloadVersionIds))].slice(0, 12);
+  const versionResults = await Promise.allSettled(versionIds.map(async (versionId) => {
+    const response = await fetch(`/api/v1/model-versions/${versionId}`, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`Model version returned HTTP ${response.status}`);
+    const data = await response.json();
+    const modelId = Number(data?.modelId ?? data?.model?.id);
+    if (!Number.isSafeInteger(modelId) || modelId <= 0) return null;
+    const name = String(data?.model?.name || data?.name || "").trim();
+    return {
+      label: name || `Model #${modelId}`,
+      source: { type: "model", modelId, versionIds: [versionId] },
+    };
+  }));
+  options.push(...versionResults
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value));
+  return uniqueSourceOptions(options);
+}
+
+async function sectionSourceOptions(heading) {
   const title = heading.dataset.cmhSectionTitle
     || (heading.textContent || "").replace(/\s+/g, " ").trim();
   const container = sectionContainer(heading);
@@ -1045,15 +1161,9 @@ function sectionSourceOptions(heading) {
     const option = sourceFromHref(link.href, text);
     if (option) options.push(option);
   }
-  const seen = new Set();
-  return options.filter(({ source }) => {
-    const key = source.type === "user" ? `u:${source.username.toLocaleLowerCase()}`
-      : source.type === "model" ? `m:${source.modelId}:${(source.versionIds || []).join(",")}`
-        : `c:${source.collectionId}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, 24);
+  const visibleOptions = uniqueSourceOptions(options);
+  if (visibleOptions.length > 0 || !/^featured images$/i.test(title)) return visibleOptions;
+  return featuredImageSourceOptions(container);
 }
 
 function setSectionResult(action, text) {
@@ -1106,7 +1216,8 @@ function renderSectionSourceChoices(action, options, hubs) {
   if (options.length === 0) {
     const note = document.createElement("div");
     note.className = "cmh-section-note";
-    note.textContent = "No creator, model or collection link is visible in this section yet.";
+    note.textContent = "Civitai has not exposed source details for these Featured cards yet. "
+      + "Hover a card to reveal its details, then try again.";
     menu.append(note);
     return;
   }
@@ -1145,13 +1256,15 @@ function createSectionAction(heading) {
     }
     const loading = document.createElement("div");
     loading.className = "cmh-section-note";
-    loading.textContent = "Loading hubs…";
+    loading.textContent = "Finding sources and loading hubs…";
     menu.replaceChildren(loading);
     openSectionMenu(action);
     await new Promise(requestAnimationFrame);
     if (!action.isConnected || openSectionAction !== action) return;
-    const options = sectionSourceOptions(heading);
-    const res = await runtimeMessage({ type: "get-hubs" });
+    const [options, res] = await Promise.all([
+      sectionSourceOptions(heading),
+      runtimeMessage({ type: "get-hubs" }),
+    ]);
     if (!action.isConnected || openSectionAction !== action) return;
     if (!res?.hubs) {
       const error = document.createElement("div");
@@ -1214,6 +1327,9 @@ function positiveId(value) {
 
 const COLLECTION_SORTS = new Set(["Newest", "Oldest", "Most Reactions", "Most Comments"]);
 const COLLECTION_PERIODS = new Set(["AllTime", "Year", "Month", "Week", "Day"]);
+// Hub profiles are deliberately a civitai.red-only feature. The mutation is
+// accepted only inside that host's top-level content script, so an extension
+// message cannot turn it into a civitai.com account-setting write.
 // Civitai keeps replies in a child thread hanging off the parent comment, so the
 // same procedure reads both: `image` for an image's own comments, `comment` for
 // the replies to one of them.
@@ -1312,7 +1428,23 @@ async function handleAccountRequest(message) {
     return readBrowsingLevel();
   }
 
-  if (message.operation === "get-image-generation-data") {
+  if (message.operation === "set-browsing-level") {
+    const level = Number(message.browsingLevel);
+    if (location.hostname !== "civitai.red"
+        || !Number.isSafeInteger(level) || level < 1 || level > 31) {
+      return { ok: false, code: "invalid-request" };
+    }
+    procedure = "user.updateContentSettings";
+    request = {
+      method: "POST",
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      // showNsfw must be true for Civitai to apply the selected mask. With it
+      // false, Civitai deliberately clamps the effective level to PG.
+      body: JSON.stringify({ json: { browsingLevel: level, showNsfw: true, domain: "red" } }),
+    };
+  } else if (message.operation === "get-image-generation-data") {
     // Prompt, resources and sampler settings for one image. Civitai serves these
     // to the signed-in session on the page, which is why the panel no longer
     // needs an API key to show them.
@@ -1421,9 +1553,23 @@ async function handleAccountRequest(message) {
     }
     const trpcStatus = Number(payload?.error?.json?.data?.httpStatus);
     const ok = response.ok && !payload?.error;
+    if (ok && message.operation === "set-browsing-level") notifyPageOfSettingsChange();
     return { ok, status: trpcStatus || response.status, payload };
   } catch {
     return { ok: false, code: "network" };
+  }
+}
+
+// The write updates Civitai's account data. Nudge the already-hydrated page to
+// re-read its session/settings cache so the site's own controls follow the hub
+// without requiring a manual page reload.
+function notifyPageOfSettingsChange() {
+  try {
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("online"));
+  } catch {
+    // Best effort: the account write is already complete.
   }
 }
 

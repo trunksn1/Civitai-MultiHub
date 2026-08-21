@@ -53,3 +53,52 @@ test("signed-in reaction routing preserves the reaction through the background b
     else delete globalThis.chrome;
   }
 });
+
+test("saved maturity writes are pinned to the requested Civitai host", async () => {
+  const hadChrome = Object.prototype.hasOwnProperty.call(globalThis, "chrome");
+  const originalChrome = globalThis.chrome;
+  const sent = [];
+  globalThis.chrome = {
+    action: { onClicked: { addListener() {} } },
+    runtime: {
+      id: "test-extension",
+      lastError: null,
+      getURL: (path) => `chrome-extension://test-extension/${path}`,
+      onMessage: { addListener() {} },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([
+          { id: 17, url: "https://civitai.com/images/123", active: true, lastAccessed: 2 },
+          { id: 29, url: "https://civitai.red/images/456", active: false, lastAccessed: 1 },
+        ]);
+      },
+      sendMessage(tabId, message, options, callback) {
+        sent.push({ tabId, message, options });
+        callback({ ok: true, status: 200, payload: null });
+      },
+    },
+    windows: {},
+  };
+
+  try {
+    const { routeAccountRequest } = await import(
+      `../extension/background.js?maturity-bridge-test=${Date.now()}`
+    );
+    const response = await routeAccountRequest({
+      operation: "set-browsing-level",
+      preferredHost: "civitai.red",
+      browsingLevel: 20,
+    }, { tab: null });
+
+    assert.equal(response.ok, true);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].tabId, 29);
+    assert.equal(sent[0].message.operation, "set-browsing-level");
+    assert.equal(sent[0].message.browsingLevel, 20);
+    assert.equal(sent[0].options.frameId, 0);
+  } finally {
+    if (hadChrome) globalThis.chrome = originalChrome;
+    else delete globalThis.chrome;
+  }
+});

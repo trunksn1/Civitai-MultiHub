@@ -2,6 +2,37 @@
 
 All notable changes to MultiHub will be documented here.
 
+## 0.13.3 - 2026-08-22
+
+### Fixed
+
+- Fixed **Add Featured to MultiHub** when Civitai initially renders Featured cards with image links
+  but delays their creator/model links until hover; MultiHub now resolves the visible cards' public
+  source metadata as a fallback.
+
+### Added
+
+- Added debounced, keyboard-accessible source autocomplete with explicit Creators, Models and
+  Collections categories. Direct Civitai URLs and numeric IDs remain available, and collection
+  search accepts only public Image collections.
+- Added optional per-hub Civitai.red content profiles. A profile is created only through **Save
+  profile**. Selecting a hub with one applies its exact mask to the signed-in Civitai.red account
+  before loading; Civitai.com and hubs without a profile continue to follow Civitai.
+- Replaced the native hub select with a keyboard-accessible custom picker. Profile badges and
+  level summaries now occupy their own visual row instead of being appended to hub names.
+- Redesigned the Civitai.red profile card with level chips, clearer action hierarchy, and distinct
+  Following, Applying, Applied, Saved, and Needs attention states. Civitai.com shows a concise
+  `.red only` notice instead of profile controls.
+
+### Changed
+
+- Hub exports omit Civitai.red profiles by default and offer an explicit choice to include
+  them. Imports containing profiles likewise require an explicit keep-or-remove choice.
+- Saved-profile writes are serialized across rapid hub changes, never blindly retried, and
+  confirmed by reading Civitai's account setting back before the feed loads.
+- Added regression coverage for independent per-hub sorting, filtering, display and playback
+  preferences.
+
 ## 0.13.2 - 2026-08-21
 
 ### Added

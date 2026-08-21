@@ -15,9 +15,12 @@ Key features:
 • Keep separate hubs for different projects or interests.
 • Sort and filter media, group posts, hide viewed items, and hide creators.
 • Add a creator, model, or public image collection directly from its Civitai page.
+• Search creators, models, and public image collections with category-aware autocomplete.
+• On civitai.red, optionally save a per-hub content profile that is applied when that hub opens.
 • View generation details and comments, then perform explicitly requested Civitai actions.
 • Keep the resource-saving single-video autoplay default, or opt into playing every video that is at least 15% visible.
-• Export and import hubs without exporting API keys or viewed history.
+• Export and import hubs without exporting API keys, viewed history, or saved Civitai.red profiles
+  unless those profiles are explicitly included.
 
 This Firefox Add-ons edition works on civitai.com and civitai.red. Civitai.com serves the SFW range; civitai.red can expose the browsing levels selected in the user's Civitai account, including mature content.
 

@@ -6,11 +6,71 @@ import {
   openSourceStreams, fetchStreamPage,
   resolveImageGenerationData, resolveImageComments,
   toggleImageReaction, resolveWritableCollections, addImageToCollection, addImageToCollections,
-  postComment, resolveAccountBrowsingLevels, userAvatarUrl, imageBuzzAmount,
+  postComment, resolveAccountBrowsingLevels, updateAccountBrowsingLevels,
+  userAvatarUrl, imageBuzzAmount,
+  searchSourceSuggestions,
   thumbnailUrl, videoPlaybackUrl, videoPosterUrl,
   CIVITAI_CAPABILITIES, getCivitaiCapabilityState, resetCivitaiCapabilities,
   explainCivitaiError,
 } from "../extension/civitai-api.js";
+
+test("source autocomplete searches and normalizes models, users, and public image collections", async () => {
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    if (String(url).includes("/models?")) return {
+      ok: true,
+      json: async () => ({ items: [{
+        id: 42, name: "Blue Hour", type: "LORA", creator: { username: "Alice" },
+        modelVersions: [{ images: [
+          { url: "https://example.com/not-allowed.jpeg" },
+          { url: "https://image.civitai.com/model.jpeg" },
+        ] }],
+      }] }),
+    };
+    if (String(url).includes("/users?")) return {
+      ok: true,
+      json: async () => ({ items: [
+        { id: 1, username: "ImageOnly.Creator" },
+        { id: 2, username: "not a supported username" },
+      ] }),
+    };
+    return {
+      ok: true,
+      json: async () => ({ items: [
+        {
+          id: 9, name: "Portrait ideas", type: "Image", itemCount: 12,
+          user: { username: "Curator" }, coverImageUrl: "https://image.civitai.com/collection.jpeg",
+        },
+        { id: 10, name: "Model bookmarks", type: "Model" },
+      ] }),
+    };
+  };
+  try {
+    const settings = { linkDomain: "civitai.red", browsingLevel: 1 | 4 };
+    const models = await searchSourceSuggestions("model", "blue hour", settings);
+    const users = await searchSourceSuggestions("user", "image", settings);
+    const collections = await searchSourceSuggestions("collection", "portrait", settings);
+    assert.deepEqual(models[0].draft, {
+      type: "model", modelId: 42, label: "LoRA: Blue Hour",
+    });
+    assert.equal(models[0].imageUrl, "https://image.civitai.com/model.jpeg");
+    assert.deepEqual(users.map((item) => item.draft), [
+      { type: "user", username: "ImageOnly.Creator" },
+    ]);
+    assert.deepEqual(collections.map((item) => item.draft), [
+      { type: "collection", collectionId: 9, label: "Collection: Portrait ideas" },
+    ]);
+    assert.ok(requested.every((url) => url.startsWith("https://civitai.red/api/v1/")));
+    assert.match(requested.find((url) => url.includes("/models?")), /query=blue\+hour/);
+    assert.match(requested.find((url) => url.includes("/models?")), /nsfw=true/);
+    assert.doesNotMatch(requested.find((url) => url.includes("/users?")), /nsfw=/);
+    assert.match(requested.find((url) => url.includes("/collections?")), /nsfw=true/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("Buzz donations are normalized as a read-only non-negative count", () => {
   assert.equal(imageBuzzAmount({ stats: { tippedAmountCountAllTime: 125.9 } }), 125);
@@ -774,6 +834,18 @@ test("the browsing level is inherited from the signed-in Civitai session", async
       (await resolveAccountBrowsingLevels(red)).levels, [1, 4, 16]
     );
 
+    // Red stores its host-specific mask in user settings; it is fresher and
+    // more specific than the generic session browsingLevel.
+    reply.current = { ok: true, status: 200, payload: {
+      signedIn: true,
+      browsingLevel: 1,
+      sessionShowNsfw: true,
+      settingsPayload: { result: { data: { json: { showNsfw: true, redBrowsingLevel: 4 | 8 } } } },
+    } };
+    assert.deepEqual(
+      await resolveAccountBrowsingLevels(red), { levels: [4, 8], reason: "inherited" }
+    );
+
     // Civitai computes the effective level as `showNsfw ? browsingLevel : PG`,
     // and getSettings is the fresher source for that switch than the session.
     reply.current = { ok: true, status: 200, payload: {
@@ -805,8 +877,48 @@ test("the browsing level is inherited from the signed-in Civitai session", async
   }
 });
 
-// Civitai's own control is the only place the browsing level is set, so there is
-// no write path left to test — only the read above.
+test("an intentionally saved hub profile updates the matching Civitai host once", async () => {
+  const hadChrome = Object.prototype.hasOwnProperty.call(globalThis, "chrome");
+  const originalChrome = globalThis.chrome;
+  const messages = [];
+  globalThis.chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage(message, callback) {
+        messages.push(message);
+        callback({ ok: true, status: 200, payload: null });
+      },
+    },
+  };
+  try {
+    assert.deepEqual(
+      await updateAccountBrowsingLevels([1, 4, 16], { linkDomain: "civitai.red" }),
+      [1, 4, 16]
+    );
+    assert.deepEqual(messages, [{
+      type: "civitai-account-request",
+      operation: "set-browsing-level",
+      preferredHost: "civitai.red",
+      browsingLevel: 21,
+    }]);
+    await assert.rejects(
+      updateAccountBrowsingLevels([1], { linkDomain: "civitai.com" }),
+      /only on civitai\.red/
+    );
+    await assert.rejects(
+      updateAccountBrowsingLevels([], { linkDomain: "civitai.red" }),
+      /At least one valid browsing level/
+    );
+    await assert.rejects(
+      updateAccountBrowsingLevels([3], { linkDomain: "civitai.red" }),
+      /At least one valid browsing level/
+    );
+    assert.equal(messages.length, 1, "invalid profiles must not send a mutation");
+  } finally {
+    if (hadChrome) globalThis.chrome = originalChrome;
+    else delete globalThis.chrome;
+  }
+});
 
 test("comment avatars resolve Civitai media keys and refuse foreign hosts", () => {
   const key = "d22de7f7-ba00-4354-b912-8241d75be9a3";

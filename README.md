@@ -11,7 +11,7 @@ know you do not want to miss.
 
 > **Browser installation:** [install MultiHub from the Chrome Web Store](https://chromewebstore.google.com/detail/multihub-for-civitai-unof/nojkmfegfgplbclepjlnkmdcmngeahbj)
 > or [install MultiHub from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/civitai-multihub-unofficial/).
-> Store installations update automatically. Version `0.13.2` is the current GitHub release;
+> Store installations update automatically. Version `0.13.3` is the current GitHub release;
 > marketplace availability can lag while browser-store reviews are in progress.
 
 This repository is the auditable open-source implementation of the extension. It lets users and
@@ -64,7 +64,7 @@ to the browsing levels selected in the user's Civitai account.
 3. Refresh any `civitai.com` or `civitai.red` tab that was already open.
 4. Optionally pin MultiHub from Chrome's extensions menu. Its toolbar icon opens the standalone feed.
 
-Chrome handles updates automatically. The `0.13.2` package requests access to both Civitai domains;
+Chrome handles updates automatically. The `0.13.3` package requests access to both Civitai domains;
 existing users who have not yet approved `civitai.red` site access may be asked to do so.
 
 ## Install from Firefox Add-ons
@@ -75,7 +75,7 @@ existing users who have not yet approved `civitai.red` site access may be asked 
 3. Refresh any `civitai.com` or `civitai.red` tab that was already open.
 4. Optionally pin MultiHub to the Firefox toolbar. Its toolbar icon opens the standalone feed.
 
-Firefox updates the add-on automatically. The `0.13.2` package requests access to both Civitai
+Firefox updates the add-on automatically. The `0.13.3` package requests access to both Civitai
 domains. Existing users who have not yet approved `civitai.red` site access may be asked to do so.
 
 ## Manual installation for development or security review
@@ -86,13 +86,13 @@ folder that contains `manifest.json` directly. Manually installed copies do not 
 ### Install a signed release asset manually
 
 Take the newest entry on the
-[Releases page](https://github.com/trunksn1/Civitai-MultiHub/releases), currently `v0.13.2`. Every
+[Releases page](https://github.com/trunksn1/Civitai-MultiHub/releases), currently `v0.13.3`. Every
 release from `v0.9.0` on carries its packages under **Assets**; older versions remain published so
 an installation can be pinned or rolled back.
 
-1. Under the `v0.13.2` release, download `civitai-multihub-full-v0.13.2.zip` and its `.sha256` file.
+1. Under the `v0.13.3` release, download `civitai-multihub-full-v0.13.3.zip` and its `.sha256` file.
    Make sure the ZIP is an asset on the **Releases** page, not GitHub's automatic source archive.
-   All `0.13.2` package variants include both Civitai domains.
+   All `0.13.3` package variants include both Civitai domains.
 2. Extract the ZIP to a permanent folder. Open it and confirm that `manifest.json` is directly
    inside that folder.
 3. Open `chrome://extensions` and enable **Developer mode**.
@@ -195,6 +195,8 @@ or distributing the extension.
   creator, prompt, resource, and generation-metadata filters.
 - Standalone and embedded Civitai experiences with host-preserving links.
 - Source aliases, enable/disable controls, bulk management, and hub import/export.
+- Debounced source autocomplete separated into Creators, Models and public Image Collections.
+- Optional, explicitly saved per-hub Civitai.red content profiles that are applied when the hub opens.
 - Image/video viewer with prompts, generation data, resources, comments, and optional scoped
   Civitai actions.
 - Always-visible card reactions, donated-Buzz links, NEW state, creator avatars, P/R publication
@@ -220,6 +222,8 @@ For every hub you can:
   that is at least 15% visible.
 - Hide media already viewed in that hub.
 - Optionally group images belonging to the same Civitai post.
+- On Civitai.red, follow the account's content levels or intentionally save a hub profile that is
+  applied when the hub opens.
 - Keep independent viewed-image history and last-visit time.
 - Export or import one or several hubs as a shareable JSON file.
 
@@ -278,9 +282,16 @@ The picker includes:
 - The ability to click **Add to MultiHub** again to close an accidental opening.
 - A short success, duplicate or failure result before returning to the normal button.
 
-Sources can also be pasted into the **Add source** field in the MultiHub sidebar. Duplicate users
-are compared case-insensitively, duplicate collections are matched by collection ID, and repeated
-model additions merge newly selected version IDs where appropriate.
+The MultiHub sidebar separates source search into **Creators**, **Models** and **Collections**.
+Typing at least two characters opens a debounced autocomplete list that can be navigated with the
+keyboard. Creator search includes image-only posters as well as model publishers; collection search
+returns only public Image collections. Selecting a model continues into the existing version picker.
+
+Direct entry remains available: paste a Civitai URL, enter a model or collection ID under the
+matching category, or type an exact creator username. A pasted URL identifies its own source type
+regardless of the selected search category. Duplicate users are compared case-insensitively,
+duplicate collections are matched by collection ID, and repeated model additions merge newly
+selected version IDs where appropriate.
 
 Inside MultiHub, hovering or focusing a creator, model, collection, generation resource, preview
 source control, or comment author opens the same add-source flow without leaving the current feed.
@@ -529,21 +540,36 @@ MultiHub uses Civitai-style browsing labels and bit values:
 | 8 | X |
 | 16 | XXX |
 
-**The browsing level is Civitai's setting, and MultiHub has no control of its own for it.** It is
-changed where the site changes it — the eye icon in Civitai's own header — and the panel mirrors
-whatever the account reports. MultiHub imposes no maturity policy of its own and cannot widen or
-narrow what the account allows.
+**The account browsing level remains a Civitai setting.** Content profiles are a
+**`civitai.red`-only feature**. A hub with no saved profile mirrors the setting chosen through
+Civitai's eye menu. A hub with an intentionally saved Civitai.red profile actively applies that
+exact mask to the Civitai.red account setting before its feed loads. On `civitai.com`, MultiHub
+follows Civitai and shows a short notice that profile controls are available only on `.red`.
 
-A level changed on Civitai reaches the feed within seconds without reopening MultiHub: it is re-read
-on a short timer while the panel is on screen, and immediately when the panel is opened or the tab
-is focused. A change refetches the hub. The sidebar states which levels are in force and where they
-came from.
+Nothing is saved merely because the Civitai eye menu changed: on Civitai.red the user must choose
+**Save profile**, review the exact PG/PG-13/R/X/XXX selection and confirm. Selecting or opening that
+hub then sends one host-pinned `user.updateContentSettings` request through the open, signed-in
+Civitai.red tab. The request also enables Civitai's mature-content master switch so the saved mask
+can take effect. **Remove** returns the hub to following Civitai.red and does not undo the last
+account setting already applied.
 
-Earlier versions offered their own picker and wrote the choice back to the account through
-`user.updateContentSettings`. The write reached Civitai's database but not the page already loaded
-in the tab, which keeps the level in a store hydrated at page load, so the setting appeared to
-revert. One setting with two owners is what produced that, and the site's own control is now the
-only owner.
+The custom hub picker gives each Civitai.red profile a dedicated badge and puts its level chips on a
+second line instead of appending technical text to the hub name. The profile card distinguishes
+Following, Applying, Applied, Saved and Needs attention states; Manage hubs also lists each profile,
+and the sidebar reports how many hubs have one. While a profile is being applied, MultiHub waits
+before loading the feed. If Civitai rejects the request or still reports a different mask, MultiHub
+explains the failure and uses only the levels Civitai confirms.
+
+A level changed on Civitai reaches MultiHub within seconds without reopening it: the setting is
+re-read on a short timer while the panel is on screen, and immediately when the panel is opened or
+the tab is focused. When the effective levels change, the sidebar asks for an explicit feed refresh
+instead of replacing a feed while it is being read. Changes outside a saved hub restriction do not
+produce an unnecessary refresh request.
+
+The account write is serialized across rapid hub changes, so a slower request for an older hub
+cannot become the final setting. MultiHub never retries this mutation blindly: if its result is
+ambiguous, it reads the account back and accepts the write only when Civitai reports the requested
+mask. The already-open Civitai page is also nudged to refresh its settings cache.
 
 While the panel is open, Civitai's browsing-level menu is kept above it. Their popover asks for
 `z-index: calc(var(--dialog-z-index) + 2)` and that variable exists only while one of their dialogs
@@ -551,9 +577,9 @@ is open, so elsewhere the declaration is invalid and the menu opened underneath 
 supplies the value the site intends, and only while the panel is open.
 
 The effective level is computed the same way the site computes it (`showNsfw ? browsingLevel : PG`).
-`browsingLevel` comes from the signed-in session on the host being browsed; the `showNsfw` master
-switch is preferred from `user.getSettings`, which Civitai patches immediately on change while the
-session lags behind its JWT refresh.
+`browsingLevel` comes from the signed-in session on the host being browsed; `redBrowsingLevel` and
+the `showNsfw` master switch are preferred from `user.getSettings`, which Civitai patches
+immediately on change while the session can lag behind its refresh.
 
 The last level read from each host is remembered locally so the feed has something to filter on
 before the first read completes. Whenever the level cannot be read that value is used and the panel
@@ -578,8 +604,9 @@ The gear button opens a proper modal with two tabs:
   viewed-history reset, standalone link domain and API key.
 - **Hidden creators:** global blacklist management.
 
-Hubs, sources, aliases, filters, the last inherited browsing level, viewed IDs and UI preferences are stored in the
-current browser profile. An API key is kept in `chrome.storage.session` by default and is cleared when
+Hubs, sources, aliases, per-hub sorting and filters, explicitly saved Civitai.red hub profiles, the last
+inherited browsing level, viewed IDs and UI preferences are stored in the current browser profile.
+An API key is kept in `chrome.storage.session` by default and is cleared when
 the browser session ends. Selecting **Remember this API key on this device** also stores it as a
 dedicated top-level `chrome.storage.local` value, separate from settings and hub data. Existing
 users who previously enabled persistent key storage retain that choice after upgrading.
@@ -604,10 +631,12 @@ definitions, aliases, selected model versions and feed preferences. They deliber
 - Internal source and hub IDs.
 - Viewed-image history.
 - Last-visit state.
+- Saved Civitai.red hub profiles, unless the export dialog explicitly includes them.
 
 **Import hub** accepts the single-hub `CMH1` format and the multi-hub `CMH2` format. It validates
 schemas, enums, IDs, version lists and workload limits before creating hubs with fresh internal
-IDs; importing never overwrites an existing hub.
+IDs; importing never overwrites an existing hub. When an imported file contains Civitai.red
+profiles, MultiHub asks whether to discard or intentionally keep them before creating the hubs.
 
 Browser extension storage is local and cannot automatically synchronize the same MultiHub state
 between Chrome and Firefox. Export/import is the supported portable transfer: export the chosen
@@ -687,7 +716,8 @@ Run the dependency-free Node test suite with:
 npm test
 ```
 
-Tests cover configuration normalization, secure export behavior, source parsing and merging,
+Tests cover configuration normalization, independent per-hub controls, intentional maturity-profile
+activation, host-pinned account writes and export behavior, source autocomplete, source parsing and merging,
 collection URL/pagination handling, deduplication, global comparators, API response unwrapping,
 cancellation, authenticated action payloads, session-versus-persistent API-key behavior, and
 release-package integrity.

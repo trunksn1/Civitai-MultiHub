@@ -11,6 +11,10 @@ CORE TEST FLOW (NO ACCOUNT OR API KEY REQUIRED)
 5. On a public Civitai creator, model, or image-collection page, click “Add … to MultiHub” and choose the hub.
 6. Return to the MultiHub tab or embedded panel and confirm that public media loads and can be sorted and filtered.
 
+The Add source section also offers public Civitai autocomplete under Creators, Models, and Collections. Collection suggestions are restricted to public Image collections. Direct source URLs and IDs remain supported.
+
+Feed options contains an optional per-hub Civitai.red content profile. It is unavailable on civitai.com and absent by default. On civitai.red it is created only after the reviewer chooses “Save profile,” selects levels, and confirms. Selecting a hub with a profile sends one host-pinned user.updateContentSettings mutation through the reviewer’s signed-in Civitai.red tab, then confirms the account mask before loading. Hubs without a profile only follow Civitai. The custom hub picker and profile card disclose saved profiles and their levels. Exports omit them unless the reviewer explicitly includes them, and imports ask before retaining them.
+
 VIDEO AUTOPLAY MODES
 The resource-saving default autoplays one most-visible video at a time after it reaches 25% visibility. General settings also contains an optional per-hub “Play all visible videos” mode. When explicitly enabled, every video that is at least 15% visible plays simultaneously. The setting is off by default, warns about CPU/GPU and bandwidth use, and remains disabled when autoplay itself is off.
 

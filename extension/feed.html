@@ -21,6 +21,10 @@
       </div>
     </div>
     <p id="browsing-note" class="hint browsing-note"></p>
+    <div id="saved-maturity-summary" class="saved-maturity-summary" hidden>
+      <span id="saved-maturity-summary-text"></span>
+      <button id="saved-maturity-review" type="button" class="secondary">Review</button>
+    </div>
     <div id="startup-error" class="startup-error" role="alert" hidden>
       <strong>MultiHub could not finish starting.</strong>
       <span>Reload Civitai and try again.</span>
@@ -29,7 +33,21 @@
 
     <section>
       <h2>Hub</h2>
-      <select id="hub-select"></select>
+      <div id="hub-picker" class="hub-picker">
+        <button id="hub-picker-trigger" class="hub-picker-trigger" type="button"
+                aria-haspopup="listbox" aria-expanded="false" aria-controls="hub-picker-options">
+          <span class="hub-picker-selection">
+            <span id="hub-picker-name" class="hub-picker-name"></span>
+            <span id="hub-picker-meta" class="hub-picker-meta"></span>
+          </span>
+          <span id="hub-picker-badge" class="hub-red-badge" hidden>
+            <span aria-hidden="true"></span>civitai.red
+          </span>
+          <span class="hub-picker-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <div id="hub-picker-options" class="hub-picker-options" role="listbox"
+             tabindex="-1" aria-label="Choose a hub" hidden></div>
+      </div>
       <div class="btn-row">
         <button id="hub-new" title="Create a new hub">New</button>
         <button id="hub-manage" title="Create, rename, delete, set a default, import or export hubs">Manage hubs</button>
@@ -38,11 +56,21 @@
 
     <section>
       <h2>Add source</h2>
+      <div id="source-kind-tabs" class="source-kind-tabs" role="tablist" aria-label="Source type">
+        <button type="button" role="tab" aria-selected="true" data-source-kind="user">Creators</button>
+        <button type="button" role="tab" aria-selected="false" data-source-kind="model">Models</button>
+        <button type="button" role="tab" aria-selected="false" data-source-kind="collection">Collections</button>
+      </div>
       <form id="add-source-form">
-        <input id="source-input" type="text"
-               placeholder="username, model/LoRA/collection URL, or model id" required />
+        <div class="source-search-field">
+          <input id="source-input" type="search" autocomplete="off" role="combobox"
+                 aria-autocomplete="list" aria-controls="source-suggestions" aria-expanded="false"
+                 placeholder="Search creators or paste a Civitai URL" required />
+          <div id="source-suggestions" class="source-suggestions" role="listbox" hidden></div>
+        </div>
         <button type="submit">Add</button>
       </form>
+      <p id="source-search-status" class="hint source-search-status" role="status" aria-live="polite"></p>
       <details class="source-help">
         <summary>What can I add?</summary>
         <dl class="source-help-list">
@@ -122,6 +150,22 @@
         </span>
         <input id="card-details-switch" type="checkbox" role="switch" />
       </label>
+      <div id="hub-maturity-red-only" class="hub-maturity-red-only" hidden>
+        <span class="hub-red-badge"><span aria-hidden="true"></span>civitai.red only</span>
+        <small>Content profiles are available when MultiHub is opened on civitai.red.</small>
+      </div>
+      <div id="hub-maturity-card" class="hub-maturity-card" hidden>
+        <header class="hub-maturity-header">
+          <strong><span class="hub-maturity-domain-dot" aria-hidden="true"></span>Civitai.red profile</strong>
+          <span id="hub-maturity-state" class="hub-maturity-state">Following</span>
+        </header>
+        <div id="hub-maturity-levels" class="hub-maturity-levels" aria-label="Content levels"></div>
+        <p id="hub-maturity-status" class="hub-maturity-status" aria-live="polite"></p>
+        <div class="hub-maturity-actions">
+          <button id="hub-maturity-edit" type="button" class="secondary">Save profile</button>
+          <button id="hub-maturity-clear" type="button" class="maturity-remove" hidden>Remove</button>
+        </div>
+      </div>
       <button id="refresh">Refresh feed</button>
     </section>
 
@@ -209,6 +253,30 @@
         </footer>
         <input id="hub-manager-import-file" type="file" accept=".json,application/json" hidden />
       </section>
+    </div>
+
+    <div id="maturity-editor-overlay" class="settings-overlay" hidden>
+      <form id="maturity-editor" class="settings-dialog maturity-editor" role="dialog" aria-modal="true"
+            aria-labelledby="maturity-editor-title" aria-describedby="maturity-editor-description">
+        <header class="settings-header">
+          <div>
+            <h2 id="maturity-editor-title">Civitai.red content profile</h2>
+            <p id="maturity-editor-description">Save the levels applied to your Civitai.red account whenever this hub opens.</p>
+          </div>
+          <button id="maturity-editor-close" type="button" class="icon-button" aria-label="Close">✕</button>
+        </header>
+        <div class="settings-content">
+          <p id="maturity-editor-account" class="maturity-editor-account"></p>
+          <fieldset id="maturity-editor-levels" class="maturity-editor-levels">
+            <legend>Levels applied when this hub opens</legend>
+          </fieldset>
+          <p id="maturity-editor-error" class="form-error" role="alert"></p>
+        </div>
+        <footer class="dialog-actions">
+          <button id="maturity-editor-cancel" type="button" class="secondary">Cancel</button>
+          <button type="submit">Save profile</button>
+        </footer>
+      </form>
     </div>
 
     <section>

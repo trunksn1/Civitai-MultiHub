@@ -43,6 +43,7 @@ const SESSION_OPERATIONS = new Set([
   "get-collection-page",
   "add-image-to-collection",
   "get-browsing-level",
+  "set-browsing-level",
   "get-comments",
   "post-comment",
   "get-image-generation-data",
@@ -51,7 +52,7 @@ const SESSION_OPERATIONS = new Set([
 
 // civitai.com and civitai.red carry separate browsing-level preferences, so
 // reading one from the wrong host would report the wrong maturity setting.
-const HOST_PINNED_OPERATIONS = new Set(["get-browsing-level"]);
+const HOST_PINNED_OPERATIONS = new Set(["get-browsing-level", "set-browsing-level"]);
 
 function isCivitaiTab(tab) {
   try {
@@ -122,6 +123,7 @@ export async function routeAccountRequest(message, sender) {
         collections: message.collections,
         collectionId: message.collectionId,
         collectionInput: message.collectionInput,
+        browsingLevel: message.browsingLevel,
       });
       if (response.ok || response.status !== 401) return response;
       lastAuthenticationResponse = response;

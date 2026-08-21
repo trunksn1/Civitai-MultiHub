@@ -7,15 +7,17 @@ import {
   resolveWritableCollections, addImageToCollections,
   postComment,
   explainCivitaiError, resetCivitaiCapabilities,
-  resolveAccountBrowsingLevels, maskFromLevels, userAvatarUrl, imageBuzzAmount,
+  resolveAccountBrowsingLevels, updateAccountBrowsingLevels,
+  maskFromLevels, userAvatarUrl, imageBuzzAmount,
+  searchSourceSuggestions,
   BROWSING_LEVEL_VALUES, BROWSING_LEVEL_LABELS,
 } from "./civitai-api.js";
 import { beginOptimisticReaction } from "./action-state.js";
 import { getComparator, hasFrontier } from "./merge.js";
 import {
   loadConfig, saveConfig, activeFeed, makeFeed,
-  parseSourceInput, mergeSourceIntoFeed, exportFeed, exportFeeds, importFeeds,
-  normalizeNewHubName,
+  parseSourceInput, mergeSourceIntoFeed, exportFeeds, importFeeds,
+  normalizeNewHubName, savedBrowsingLevelsForHub, effectiveHubBrowsingLevels,
   MAX_HUBS,
 } from "./storage.js";
 import {
@@ -38,6 +40,8 @@ const BATCH = 15; // reveal the prefetched second half, then continue in small s
 const STREAM_FETCH_CONCURRENCY = 6;
 const LOAD_AHEAD_PX = 3200;
 const SCROLL_IDLE_MS = 240;
+const SOURCE_SEARCH_DEBOUNCE_MS = 300;
+const SOURCE_SEARCH_MIN_LENGTH = 2;
 const SCROLL_DIAGNOSTICS_KEY = "cmh-scroll-diagnostics-v1";
 const MAX_SCROLL_DIAGNOSTICS = 240;
 const pageParams = new URLSearchParams(location.search);
@@ -84,6 +88,19 @@ let viewedSaveTimer;
 const versionMetadataQueue = [];
 let accountBrowsingReason = null; // how the level was established, for the sidebar note
 let browsingLevelRefreshPending = false;
+let browsingLevelWritePending = 0;
+let hubActivationRevision = 0;
+let maturitySyncQueue = Promise.resolve();
+let maturitySyncState = null; // { feedId, host, phase: applying | applied | failed, message? }
+let hubPickerActiveIndex = -1;
+let hubPickerTypeahead = "";
+let hubPickerTypeaheadTimer = null;
+let sourceSearchKind = "user";
+let sourceSearchTimer = null;
+let sourceSearchController = null;
+let sourceSearchRequest = 0;
+let sourceSuggestions = [];
+let activeSourceSuggestion = -1;
 let versionMetadataActive = 0;
 const creatorProfileQueue = [];
 let creatorProfileActive = 0;
@@ -324,17 +341,34 @@ function availableBrowsingLevels() {
     ? [...BROWSING_LEVEL_VALUES] : BROWSING_LEVEL_VALUES.filter((level) => level <= 2);
 }
 
-// The browsing level belongs to Civitai. It is set on the site's own control —
-// the eye icon in its header — and this panel mirrors whatever that says. The
-// stored selection is only a cache of the last level read from the account, so
-// the feed has something to filter on before the first read completes and while
-// no signed-in tab is open. MultiHub used to offer its own picker and write the
-// level back, which the already-loaded site page never picked up reliably.
-function selectedBrowsingLevels() {
+function formatBrowsingLevels(levels, fallback = "none") {
+  const labels = (levels || []).map((level) => BROWSING_LEVEL_LABELS[level]).filter(Boolean);
+  return labels.length > 0 ? labels.join(", ") : fallback;
+}
+
+function formatProfileLevels(levels, fallback = "No levels") {
+  const labels = (levels || []).map((level) => BROWSING_LEVEL_LABELS[level]).filter(Boolean);
+  return labels.length > 0 ? labels.join(" · ") : fallback;
+}
+
+// Hubs without a saved profile mirror Civitai. An intentionally saved
+// Civitai.red profile is different: activating that hub writes its exact mask
+// to .red, then this cache is updated from the confirmed account state.
+function inheritedBrowsingLevels() {
   const available = availableBrowsingLevels();
   const stored = config.settings.browsingLevelsByDomain?.[browsingScope()] || [];
   const levels = stored.map(Number).filter((level) => available.includes(level));
   return levels.length > 0 ? levels : available;
+}
+
+function hubSavedBrowsingLevels(hub = feed(), host = effectiveLinkDomain()) {
+  return host === "civitai.red" ? savedBrowsingLevelsForHub(hub, host) : null;
+}
+
+function selectedBrowsingLevels() {
+  return effectiveHubBrowsingLevels(
+    feed(), effectiveLinkDomain(), inheritedBrowsingLevels()
+  );
 }
 
 // The only writer of that cache. Returns whether it actually changed.
@@ -343,17 +377,17 @@ async function setBrowsingLevels(levels) {
   const next = [...new Set(levels.map(Number))]
     .filter((level) => available.includes(level)).sort((a, b) => a - b);
   if (next.length === 0) return false;
-  if (maskFromLevels(next) === maskFromLevels(selectedBrowsingLevels())) return false;
+  if (maskFromLevels(next) === maskFromLevels(inheritedBrowsingLevels())) return false;
   config.settings.browsingLevelsByDomain[browsingScope()] = next;
   await saveConfig(config);
   return true;
 }
 
-// Read the level from Civitai and adopt it. Nothing else decides it, so there is
-// no conflict to resolve: a read that succeeds wins, and one that fails leaves
-// the last known level in place. Returns whether the feed's levels changed,
-// which is what decides a refetch.
+// Read the level from Civitai and adopt it. A read that succeeds wins, and one
+// that fails leaves the last known level in place. Saved-profile activation
+// calls this only when it is following Civitai or confirming a completed write.
 async function syncBrowsingLevelsFromCivitai() {
+  const previousEffectiveMask = maskFromLevels(selectedBrowsingLevels());
   let result;
   try {
     result = await resolveAccountBrowsingLevels(effectiveApiSettings());
@@ -362,7 +396,117 @@ async function syncBrowsingLevelsFromCivitai() {
   }
   accountBrowsingReason = result.reason;
   if (!result.levels) return false;
-  return setBrowsingLevels(result.levels);
+  const cachedChanged = await setBrowsingLevels(result.levels);
+  return cachedChanged
+    && previousEffectiveMask !== maskFromLevels(selectedBrowsingLevels());
+}
+
+function activeMaturitySyncState() {
+  const state = maturitySyncState;
+  return state && state.feedId === config.activeFeedId && state.host === effectiveLinkDomain()
+    ? state : null;
+}
+
+function renderMaturitySyncState() {
+  renderBrowsingLevelNote();
+  renderMaturityControls();
+}
+
+function maturitySyncFailureMessage(error, confirmation, desired) {
+  if (confirmation?.levels) {
+    return `Civitai still reports ${formatBrowsingLevels(confirmation.levels)} instead of ${
+      formatBrowsingLevels(desired)
+    }.`;
+  }
+  return explainCivitaiError(error, {
+    action: "Applying this hub's Civitai.red profile",
+    scope: "content settings",
+    mutation: true,
+  });
+}
+
+// Writes are serialized so rapid A → B hub changes cannot leave the account on
+// A if its slower request finishes last. A stale activation never starts a feed;
+// the latest queued activation always gets the final account write.
+function syncSavedMaturityForHub(hub, revision) {
+  const host = effectiveLinkDomain();
+  const desired = hubSavedBrowsingLevels(hub, host)?.slice() || null;
+  const task = maturitySyncQueue.catch(() => {}).then(async () => {
+    if (revision !== hubActivationRevision || config.activeFeedId !== hub.id) {
+      return { stale: true };
+    }
+    if (!desired) {
+      maturitySyncState = null;
+      const changed = await syncBrowsingLevelsFromCivitai();
+      if (revision === hubActivationRevision && config.activeFeedId === hub.id) {
+        renderMaturitySyncState();
+      }
+      return { stale: revision !== hubActivationRevision, changed };
+    }
+
+    maturitySyncState = { feedId: hub.id, host, phase: "applying" };
+    browsingLevelWritePending += 1;
+    renderMaturitySyncState();
+    let writeSucceeded = false;
+    let writeError = null;
+    let confirmation = null;
+    try {
+      await updateAccountBrowsingLevels(desired, {
+        ...effectiveApiSettings(),
+        linkDomain: host,
+      });
+      writeSucceeded = true;
+    } catch (error) {
+      writeError = error;
+    }
+
+    // A mutation response can be ambiguous behind Civitai's session refresh.
+    // One read confirms whether it landed without sending the write twice.
+    try {
+      confirmation = await resolveAccountBrowsingLevels({
+        ...effectiveApiSettings(),
+        linkDomain: host,
+      });
+    } catch {
+      confirmation = { levels: null, reason: "unreachable" };
+    } finally {
+      browsingLevelWritePending -= 1;
+    }
+
+    const desiredMask = maskFromLevels(desired);
+    const confirmedMask = confirmation?.levels ? maskFromLevels(confirmation.levels) : null;
+    const applied = confirmedMask === desiredMask || (writeSucceeded && confirmedMask === null);
+    if (confirmation?.levels) {
+      await setBrowsingLevels(confirmation.levels);
+      accountBrowsingReason = confirmation.reason;
+    } else if (applied) {
+      await setBrowsingLevels(desired);
+      accountBrowsingReason = "inherited";
+    }
+
+    const stale = revision !== hubActivationRevision || config.activeFeedId !== hub.id;
+    if (stale) return { stale: true, applied };
+    browsingLevelRefreshPending = false;
+    if (applied) {
+      const appliedState = { feedId: hub.id, host, phase: "applied" };
+      maturitySyncState = appliedState;
+      setStatus(`Applied ${formatBrowsingLevels(desired)} to ${host} for “${hub.name}”.`);
+      setTimeout(() => {
+        if (maturitySyncState === appliedState) {
+          maturitySyncState = null;
+          renderMaturitySyncState();
+        }
+      }, 1800);
+    } else {
+      const message = maturitySyncFailureMessage(writeError, confirmation, desired);
+      maturitySyncState = { feedId: hub.id, host, phase: "failed", message };
+      setStatus(message);
+    }
+    renderMaturitySyncState();
+    return { stale: false, applied };
+  });
+  maturitySyncQueue = task.catch(() => {});
+  return task;
 }
 
 // A level changed on Civitai has to reach an already-open panel, so the setting
@@ -380,10 +524,12 @@ function panelOnScreen() {
 }
 
 async function refreshBrowsingLevels({ force = false } = {}) {
+  if (browsingLevelWritePending > 0) return;
   if (!force && !panelOnScreen()) return;
   const changed = await syncBrowsingLevelsFromCivitai();
   if (changed) browsingLevelRefreshPending = true;
   renderBrowsingLevelNote();
+  renderMaturityControls();
 }
 
 function watchCivitaiBrowsingLevel() {
@@ -765,16 +911,112 @@ document.addEventListener("pointerdown", (event) => {
 
 // ---------- sidebar rendering ----------
 
-function renderHubs() {
-  const select = $("hub-select");
-  select.textContent = "";
-  for (const f of config.feeds) {
-    const opt = document.createElement("option");
-    opt.value = f.id;
-    opt.textContent = `${f.id === config.defaultFeedId ? "★ " : ""}${f.name}`;
-    select.append(opt);
+function makeHubRedBadge(label = "civitai.red") {
+  const badge = document.createElement("span");
+  badge.className = "hub-red-badge";
+  const dot = document.createElement("span");
+  dot.setAttribute("aria-hidden", "true");
+  badge.append(dot, label);
+  return badge;
+}
+
+function hubPickerMeta(hub, savedRed = null) {
+  if (effectiveLinkDomain() === "civitai.red") {
+    return savedRed ? formatProfileLevels(savedRed) : "Follows Civitai.red";
   }
-  select.value = config.activeFeedId;
+  return `${hub.sources.length} source${hub.sources.length === 1 ? "" : "s"} · civitai.com`;
+}
+
+function hubPickerOptions() {
+  return [...$("hub-picker-options").querySelectorAll('[role="option"]')];
+}
+
+function setHubPickerActive(index, { scroll = true } = {}) {
+  const options = hubPickerOptions();
+  if (options.length === 0) return;
+  hubPickerActiveIndex = (index + options.length) % options.length;
+  options.forEach((option, optionIndex) => {
+    option.classList.toggle("is-active", optionIndex === hubPickerActiveIndex);
+  });
+  const active = options[hubPickerActiveIndex];
+  $("hub-picker-options").setAttribute("aria-activedescendant", active.id);
+  if (scroll) active.scrollIntoView({ block: "nearest" });
+}
+
+function closeHubPicker({ restoreFocus = false } = {}) {
+  const options = $("hub-picker-options");
+  if (options.hidden) return;
+  options.hidden = true;
+  options.removeAttribute("aria-activedescendant");
+  $("hub-picker-trigger").setAttribute("aria-expanded", "false");
+  hubPickerActiveIndex = -1;
+  hubPickerTypeahead = "";
+  clearTimeout(hubPickerTypeaheadTimer);
+  if (restoreFocus) $("hub-picker-trigger").focus();
+}
+
+function openHubPicker() {
+  const options = $("hub-picker-options");
+  if (!options.hidden) return;
+  options.hidden = false;
+  $("hub-picker-trigger").setAttribute("aria-expanded", "true");
+  const selectedIndex = Math.max(0, config.feeds.findIndex((hub) => hub.id === config.activeFeedId));
+  setHubPickerActive(selectedIndex, { scroll: false });
+  options.focus({ preventScroll: true });
+  hubPickerOptions()[selectedIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+async function chooseHubFromPicker(feedId) {
+  closeHubPicker({ restoreFocus: true });
+  if (feedId === config.activeFeedId) return;
+  await switchHub(feedId);
+}
+
+function renderHubs() {
+  const hostIsRed = effectiveLinkDomain() === "civitai.red";
+  const current = feed();
+  const currentSavedRed = hostIsRed ? hubSavedBrowsingLevels(current, "civitai.red") : null;
+  $("hub-picker-name").textContent = `${current.id === config.defaultFeedId ? "★ " : ""}${current.name}`;
+  $("hub-picker-meta").textContent = hubPickerMeta(current, currentSavedRed);
+  const badge = $("hub-picker-badge");
+  badge.hidden = !currentSavedRed;
+  $("hub-picker-trigger").setAttribute(
+    "aria-label",
+    `Current hub: ${current.name}. ${hubPickerMeta(current, currentSavedRed)}. Choose another hub.`
+  );
+
+  const list = $("hub-picker-options");
+  const wasOpen = !list.hidden;
+  list.replaceChildren();
+  config.feeds.forEach((hub, index) => {
+    const savedRed = hostIsRed ? hubSavedBrowsingLevels(hub, "civitai.red") : null;
+    const option = document.createElement("div");
+    option.id = `hub-picker-option-${index}`;
+    option.className = "hub-picker-option";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(hub.id === config.activeFeedId));
+    option.dataset.hubId = hub.id;
+    option.dataset.hubName = hub.name.toLocaleLowerCase();
+    const head = document.createElement("div");
+    head.className = "hub-picker-option-head";
+    const name = document.createElement("span");
+    name.className = "hub-picker-option-name";
+    name.textContent = `${hub.id === config.defaultFeedId ? "★ " : ""}${hub.name}`;
+    head.append(name);
+    if (savedRed) head.append(makeHubRedBadge());
+    const meta = document.createElement("span");
+    meta.className = "hub-picker-option-meta";
+    meta.textContent = hubPickerMeta(hub, savedRed);
+    option.append(head, meta);
+    option.addEventListener("pointermove", () => setHubPickerActive(index, { scroll: false }));
+    option.addEventListener("click", () => chooseHubFromPicker(hub.id));
+    list.append(option);
+  });
+  if (wasOpen) {
+    const selectedIndex = Math.max(0, config.feeds.findIndex((hub) => hub.id === config.activeFeedId));
+    setHubPickerActive(selectedIndex, { scroll: false });
+  }
+  renderSavedMaturitySummary();
 }
 
 function updateHubManagerActions() {
@@ -821,9 +1063,10 @@ function renderHubManager() {
     name.textContent = hub.name;
     const meta = document.createElement("span");
     meta.className = "hub-manager-meta";
+    const savedRed = hubSavedBrowsingLevels(hub, "civitai.red");
     meta.textContent = `${hub.sources.length} source${hub.sources.length === 1 ? "" : "s"}${
-      hub.id === config.activeFeedId ? " · current" : ""
-    }`;
+      savedRed ? ` · Civitai.red profile: ${formatProfileLevels(savedRed)}` : ""
+    }${hub.id === config.activeFeedId ? " · current" : ""}`;
     row.append(selected, favorite, name, meta);
     list.append(row);
   }
@@ -2927,6 +3170,17 @@ async function startFeed({
     saveConfig(config);
   }
   previousVisitAt = visitThresholds.get(f.id);
+  if (selectedBrowsingLevels().length === 0) {
+    if (loadingRunId === run) loadingRunId = null;
+    setupGrid({ reason: `start-feed-empty-maturity:${reason}` });
+    emptyEl.hidden = false;
+    emptyEl.textContent = "This hub's Civitai.red profile could not be applied. Review the profile or your Civitai.red account setting.";
+    setStatus("");
+    recordScrollDiagnostic("start-feed-end", {
+      reason, requestedRun: run, emptyMaturityIntersection: true,
+    });
+    return;
+  }
   const enabledSources = f.sources.filter((source) => source.enabled !== false);
   if (enabledSources.length === 0) {
     if (loadingRunId === run) loadingRunId = null;
@@ -3054,6 +3308,8 @@ function syncFeedControls() {
   $("api-key").value = config.settings.apiKey;
   $("remember-api-key").checked = config.settings.rememberApiKey === true;
   renderBrowsingLevelNote();
+  renderMaturityControls();
+  renderSavedMaturitySummary();
   renderHiddenCreators();
 }
 
@@ -3069,9 +3325,35 @@ const SYNC_FAILURE_NOTES = {
 // points at the setting that decides it.
 function renderBrowsingLevelNote() {
   const host = effectiveLinkDomain();
-  const shown = selectedBrowsingLevels().map((level) => BROWSING_LEVEL_LABELS[level]).join(", ");
+  const inherited = inheritedBrowsingLevels();
+  const saved = hubSavedBrowsingLevels();
+  const effective = selectedBrowsingLevels();
+  const shown = formatBrowsingLevels(effective, "no content levels");
   const note = $("browsing-note");
-  if (accountBrowsingReason === null) {
+  const syncState = activeMaturitySyncState();
+  if (syncState?.phase === "applying") {
+    note.textContent = `Applying this hub's Civitai.red profile (${formatBrowsingLevels(saved)})…`;
+    note.title = "MultiHub is updating your Civitai content setting before loading this hub.";
+    return;
+  }
+  if (saved) {
+    if (effective.length === 0) {
+      note.textContent = `Showing no rated media — this hub is saved for ${
+        formatBrowsingLevels(saved)
+      }, but those levels are not enabled in your ${host} settings.`;
+    } else if (effective.length < saved.length) {
+      note.textContent = `Showing ${shown} — this hub is saved for ${
+        formatBrowsingLevels(saved)
+      }; your ${host} setting currently allows ${formatBrowsingLevels(inherited)}.`;
+    } else {
+      note.textContent = `Showing ${shown} — saved intentionally for this hub on ${host}.`;
+    }
+    if (![null, "inherited", "nsfw-disabled"].includes(accountBrowsingReason)) {
+      note.textContent += ` The account setting could not be read (${
+        SYNC_FAILURE_NOTES[accountBrowsingReason] || "the setting could not be read"
+      }), so its last known value applies.`;
+    }
+  } else if (accountBrowsingReason === null) {
     // The first read is still in flight; the cached level is what the feed uses.
     note.textContent = `Showing ${shown} — reading your browsing level from ${host}…`;
   } else if (accountBrowsingReason === "inherited") {
@@ -3086,7 +3368,181 @@ function renderBrowsingLevelNote() {
   if (browsingLevelRefreshPending) {
     note.textContent += " Refresh the feed when you want to apply the new level.";
   }
-  note.title = `Set the browsing level on ${host}; MultiHub follows it.`;
+  if (syncState?.phase === "failed") note.textContent += ` ${syncState.message}`;
+  note.title = saved
+    ? "Selecting this hub applies its profile to your Civitai.red account setting."
+    : `Set the browsing level on ${host}; MultiHub follows it.`;
+}
+
+function renderSavedMaturitySummary() {
+  const summary = $("saved-maturity-summary");
+  if (!summary || effectiveLinkDomain() !== "civitai.red") {
+    if (summary) summary.hidden = true;
+    return;
+  }
+  const count = config.feeds.filter((hub) => hubSavedBrowsingLevels(hub, "civitai.red")).length;
+  summary.hidden = count === 0;
+  if (count === 0) return;
+  const activeSaved = Boolean(hubSavedBrowsingLevels(feed(), "civitai.red"));
+  $("saved-maturity-summary-text").textContent = `${count} hub${count === 1 ? " has a" : "s have"} Civitai.red profile${count === 1 ? "" : "s"}${
+    activeSaved ? ", including this hub" : ""
+  }.`;
+}
+
+function renderMaturityLevelChips(levels, { following = false } = {}) {
+  const container = $("hub-maturity-levels");
+  container.replaceChildren();
+  container.classList.toggle("is-following", following);
+  for (const level of levels || []) {
+    const chip = document.createElement("span");
+    chip.className = "hub-maturity-level";
+    chip.textContent = BROWSING_LEVEL_LABELS[level];
+    container.append(chip);
+  }
+}
+
+function renderMaturityControls() {
+  const host = effectiveLinkDomain();
+  const onRed = host === "civitai.red";
+  $("hub-maturity-card").hidden = !onRed;
+  $("hub-maturity-red-only").hidden = onRed;
+  if (!onRed) return;
+
+  const inherited = inheritedBrowsingLevels();
+  const saved = hubSavedBrowsingLevels();
+  const effective = selectedBrowsingLevels();
+  const status = $("hub-maturity-status");
+  const state = $("hub-maturity-state");
+  const card = $("hub-maturity-card");
+  const syncState = activeMaturitySyncState();
+  const phase = syncState?.phase || (saved ? "saved" : "following");
+  card.dataset.phase = phase;
+  card.setAttribute("aria-busy", String(phase === "applying"));
+  state.dataset.state = phase;
+  renderMaturityLevelChips(saved || inherited, { following: !saved });
+  if (syncState?.phase === "applying") {
+    state.textContent = "Applying";
+    status.textContent = "Updating your Civitai.red account before this hub loads…";
+  } else if (syncState?.phase === "applied") {
+    state.textContent = "Applied";
+    status.textContent = "Profile applied. These levels will be restored whenever this hub opens.";
+  } else if (syncState?.phase === "failed") {
+    state.textContent = "Needs attention";
+    status.textContent = `The profile could not be applied. ${syncState.message}`;
+  } else if (!saved) {
+    state.textContent = "Following";
+    status.textContent = "Uses your current Civitai.red setting. Save a profile to restore the same levels whenever this hub opens.";
+  } else if (effective.length === 0) {
+    state.textContent = "Needs attention";
+    state.dataset.state = "failed";
+    status.textContent = "None of this profile's levels are currently enabled on Civitai.red.";
+  } else if (effective.length < saved.length) {
+    state.textContent = "Needs attention";
+    state.dataset.state = "failed";
+    status.textContent = `Profile: ${formatProfileLevels(saved)}. Currently showing ${formatProfileLevels(effective)}.`;
+  } else {
+    state.textContent = "Saved";
+    status.textContent = "Applied to your Civitai.red account whenever this hub opens.";
+  }
+  $("hub-maturity-edit").textContent = saved ? "Edit profile" : "Save profile";
+  $("hub-maturity-clear").hidden = !saved;
+  $("hub-maturity-edit").disabled = syncState?.phase === "applying";
+  $("hub-maturity-clear").disabled = syncState?.phase === "applying";
+}
+
+function closeMaturityEditor() {
+  $("maturity-editor-overlay").hidden = true;
+  $("maturity-editor-error").textContent = "";
+}
+
+function openMaturityEditor() {
+  const host = effectiveLinkDomain();
+  if (host !== "civitai.red") return;
+  const inherited = inheritedBrowsingLevels();
+  const saved = hubSavedBrowsingLevels();
+  const initial = saved || inherited;
+  $("maturity-editor-title").textContent = `Civitai.red profile for “${feed().name}”`;
+  $("maturity-editor-description").textContent = "These levels are saved only for this hub and applied to your Civitai.red account whenever it opens.";
+  $("maturity-editor-account").textContent = `Your current Civitai.red setting allows ${formatBrowsingLevels(inherited)}.`;
+  $("maturity-editor-error").textContent = "";
+  const list = $("maturity-editor-levels");
+  list.querySelectorAll("label").forEach((label) => label.remove());
+  for (const level of availableBrowsingLevels()) {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = String(level);
+    checkbox.checked = initial.includes(level);
+    const accountNote = inherited.includes(level) ? "currently enabled" : "not enabled on Civitai";
+    label.append(checkbox, `${BROWSING_LEVEL_LABELS[level]} — ${accountNote}`);
+    list.append(label);
+  }
+  $("maturity-editor-overlay").hidden = false;
+  requestAnimationFrame(() => list.querySelector("input:checked, input")?.focus());
+}
+
+async function clearHubMaturityProfile() {
+  const host = "civitai.red";
+  if (effectiveLinkDomain() !== host) return;
+  if (!hubSavedBrowsingLevels()) return;
+  if (!await askConfirmation(
+    "Remove Civitai.red profile?",
+    `Make “${feed().name}” follow your current Civitai.red content setting instead? The account setting already applied will not be changed.`,
+    { confirmLabel: "Remove profile" }
+  )) return;
+  delete feed().savedBrowsingLevelsByDomain[host];
+  if (Object.keys(feed().savedBrowsingLevelsByDomain).length === 0) {
+    delete feed().savedBrowsingLevelsByDomain;
+  }
+  await saveConfig(config);
+  renderHubs();
+  renderHubManager();
+  syncFeedControls();
+  const revision = ++hubActivationRevision;
+  await syncSavedMaturityForHub(feed(), revision);
+  if (revision !== hubActivationRevision) return;
+  startFeed({ clearImmediately: true, reason: "hub-maturity-clear" });
+}
+
+function bindMaturityEditor() {
+  $("hub-maturity-edit").addEventListener("click", openMaturityEditor);
+  $("hub-maturity-clear").addEventListener("click", clearHubMaturityProfile);
+  $("saved-maturity-review").addEventListener("click", openHubManager);
+  $("maturity-editor-close").addEventListener("click", closeMaturityEditor);
+  $("maturity-editor-cancel").addEventListener("click", closeMaturityEditor);
+  $("maturity-editor-overlay").addEventListener("click", (event) => {
+    if (event.target === $("maturity-editor-overlay")) closeMaturityEditor();
+  });
+  $("maturity-editor").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const levels = [...$("maturity-editor-levels").querySelectorAll("input:checked")]
+      .map((input) => Number(input.value)).sort((a, b) => a - b);
+    if (levels.length === 0) {
+      $("maturity-editor-error").textContent = "Select at least one content level.";
+      return;
+    }
+    const host = "civitai.red";
+    if (effectiveLinkDomain() !== host) {
+      $("maturity-editor-error").textContent = "Content profiles are available only on Civitai.red.";
+      return;
+    }
+    feed().savedBrowsingLevelsByDomain = {
+      ...(feed().savedBrowsingLevelsByDomain || {}),
+      [host]: levels,
+    };
+    await saveConfig(config);
+    closeMaturityEditor();
+    renderHubs();
+    renderHubManager();
+    syncFeedControls();
+    const revision = ++hubActivationRevision;
+    await syncSavedMaturityForHub(feed(), revision);
+    if (revision !== hubActivationRevision) return;
+    startFeed({ clearImmediately: true, reason: "hub-maturity-save" });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("maturity-editor-overlay").hidden) closeMaturityEditor();
+  });
 }
 
 function renderHiddenCreators() {
@@ -3113,6 +3569,7 @@ function renderHiddenCreators() {
 }
 
 async function switchHub(feedId) {
+  const revision = ++hubActivationRevision;
   selectedSourceIds = new Set();
   sourceManageMode = false;
   config.activeFeedId = feedId;
@@ -3120,11 +3577,65 @@ async function switchHub(feedId) {
   renderHubs();
   renderSources();
   syncFeedControls();
+  await syncSavedMaturityForHub(feed(), revision);
+  if (revision !== hubActivationRevision || config.activeFeedId !== feedId) return;
   startFeed({ clearImmediately: true, reason: "hub-switch" });
 }
 
 function bindHubs() {
-  $("hub-select").addEventListener("change", (e) => switchHub(e.target.value));
+  const trigger = $("hub-picker-trigger");
+  const options = $("hub-picker-options");
+  trigger.addEventListener("click", () => {
+    if (options.hidden) openHubPicker();
+    else closeHubPicker({ restoreFocus: true });
+  });
+  trigger.addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    openHubPicker();
+    if (event.key === "ArrowUp") setHubPickerActive(hubPickerOptions().length - 1);
+  });
+  options.addEventListener("keydown", (event) => {
+    const optionElements = hubPickerOptions();
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHubPickerActive(hubPickerActiveIndex + 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHubPickerActive(hubPickerActiveIndex - 1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setHubPickerActive(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setHubPickerActive(optionElements.length - 1);
+    } else if (["Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      const selected = optionElements[hubPickerActiveIndex];
+      if (selected) chooseHubFromPicker(selected.dataset.hubId);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeHubPicker({ restoreFocus: true });
+    } else if (event.key === "Tab") {
+      closeHubPicker();
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      hubPickerTypeahead += event.key.toLocaleLowerCase();
+      clearTimeout(hubPickerTypeaheadTimer);
+      hubPickerTypeaheadTimer = setTimeout(() => { hubPickerTypeahead = ""; }, 700);
+      const ordered = optionElements.map((option, index) => ({ option, index }));
+      const start = Math.max(0, hubPickerActiveIndex + 1);
+      const rotated = [...ordered.slice(start), ...ordered.slice(0, start)];
+      let match = rotated.find(({ option }) => option.dataset.hubName.startsWith(hubPickerTypeahead));
+      if (!match) {
+        hubPickerTypeahead = event.key.toLocaleLowerCase();
+        match = rotated.find(({ option }) => option.dataset.hubName.startsWith(hubPickerTypeahead));
+      }
+      if (match) setHubPickerActive(match.index);
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!options.hidden && !$("hub-picker").contains(event.target)) closeHubPicker();
+  });
 
   $("hub-new").addEventListener("click", async () => {
     if (config.feeds.length >= MAX_HUBS) {
@@ -3206,9 +3717,9 @@ function bindHubs() {
     renderHubs();
     renderHubManager();
   });
-  $("hub-manager-export").addEventListener("click", () => {
+  $("hub-manager-export").addEventListener("click", async () => {
     const selected = config.feeds.filter((hub) => selectedHubIds.has(hub.id));
-    if (selected.length > 0) exportFeeds(selected);
+    if (selected.length > 0) await exportHubsWithMaturityChoice(selected);
   });
   $("hub-manager-delete").addEventListener("click", async () => {
     const selected = config.feeds.filter((hub) => selectedHubIds.has(hub.id));
@@ -3219,6 +3730,7 @@ function bindHubs() {
       { confirmLabel: "Delete" }
     )) return;
     const removedIds = new Set(selected.map((hub) => hub.id));
+    const activeRemoved = removedIds.has(config.activeFeedId);
     config.feeds = config.feeds.filter((hub) => !removedIds.has(hub.id));
     if (config.feeds.length === 0) config.feeds.push(makeFeed("My hub"));
     if (removedIds.has(config.defaultFeedId)) config.defaultFeedId = null;
@@ -3231,6 +3743,11 @@ function bindHubs() {
     renderHubManager();
     renderSources();
     syncFeedControls();
+    if (activeRemoved) {
+      const revision = ++hubActivationRevision;
+      await syncSavedMaturityForHub(feed(), revision);
+      if (revision !== hubActivationRevision) return;
+    }
     startFeed({ clearImmediately: true, reason: "hub-manager-delete" });
   });
   $("hub-manager-import").addEventListener("click", () => $("hub-manager-import-file").click());
@@ -3344,8 +3861,11 @@ function bindSettings() {
     config.settings.linkDomain = e.target.value;
     await saveConfig(config);
     clearModelCache();
-    await syncBrowsingLevelsFromCivitai();
-    renderBrowsingLevelNote();
+    renderHubs();
+    syncFeedControls();
+    const revision = ++hubActivationRevision;
+    await syncSavedMaturityForHub(feed(), revision);
+    if (revision !== hubActivationRevision) return;
     startFeed({ reason: "link-domain-change" });
   });
   $("api-key").addEventListener("change", async (e) => {
@@ -3367,69 +3887,254 @@ function bindSettings() {
   });
 }
 
-function bindAddSource() {
-  $("add-source-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const draft = parseSourceInput($("source-input").value);
-    if (!draft) {
-      setStatus("Could not parse that input — use a username, model id, or Civitai user/model/collection URL.");
-      return;
-    }
-    if (draft.type === "model") {
-      try {
-        setStatus(`Resolving model ${draft.modelId}…`);
-        const model = await resolveModel(draft.modelId, config.settings);
-        draft.label = `${model.type === "LORA" ? "LoRA" : model.type}: ${model.name}`;
-        const versionHelp = model.versions.map((version) => `${version.id}: ${version.name}`).join("\n");
-        const versions = await askText(
-          "Choose model versions",
-          `Enter comma-separated version IDs or “all”.\n\n${versionHelp}`,
-          draft.versionIds?.join(", ") || "all",
-          {
-            inputLabel: "Version IDs", maxLength: 1000, confirmLabel: "Use versions",
-            nativeMessage: `Choose model versions now. Enter comma-separated IDs or "all":\n${versionHelp}`,
-          }
-        );
-        if (versions === null) return;
-        if (versions.trim().toLocaleLowerCase() === "all" || !versions.trim()) delete draft.versionIds;
-        else {
-          const ids = [...new Set(versions.split(",").map((id) => Number(id.trim()))
-            .filter((id) => Number.isSafeInteger(id) && id > 0))];
-          if (ids.length === 0) {
-            setStatus("No valid model-version IDs were entered.");
-            return;
-          }
-          draft.versionIds = ids;
+const SOURCE_SEARCH_COPY = {
+  user: { placeholder: "Search creators or paste a Civitai URL", noun: "creator" },
+  model: { placeholder: "Search models and LoRAs or paste a URL/ID", noun: "model" },
+  collection: { placeholder: "Search public image collections or paste a URL/ID", noun: "collection" },
+};
+
+function closeSourceSuggestions({ abort = false } = {}) {
+  clearTimeout(sourceSearchTimer);
+  sourceSearchTimer = null;
+  if (abort) sourceSearchController?.abort();
+  if (abort) sourceSearchController = null;
+  sourceSuggestions = [];
+  activeSourceSuggestion = -1;
+  $("source-suggestions").replaceChildren();
+  $("source-suggestions").hidden = true;
+  $("source-input").setAttribute("aria-expanded", "false");
+  $("source-input").removeAttribute("aria-activedescendant");
+}
+
+function setActiveSourceSuggestion(index) {
+  if (sourceSuggestions.length === 0) return;
+  activeSourceSuggestion = (index + sourceSuggestions.length) % sourceSuggestions.length;
+  const options = [...$("source-suggestions").querySelectorAll(".source-suggestion")];
+  options.forEach((option, optionIndex) => {
+    option.setAttribute("aria-selected", String(optionIndex === activeSourceSuggestion));
+  });
+  const active = options[activeSourceSuggestion];
+  if (active) {
+    $("source-input").setAttribute("aria-activedescendant", active.id);
+    active.scrollIntoView({ block: "nearest" });
+  }
+}
+
+async function addSourceDraft(inputDraft) {
+  const draft = { ...inputDraft };
+  closeSourceSuggestions({ abort: true });
+  $("source-search-status").textContent = "";
+  if (draft.type === "model") {
+    try {
+      setStatus(`Resolving model ${draft.modelId}…`);
+      const model = await resolveModel(draft.modelId, effectiveApiSettings());
+      draft.label = `${model.type === "LORA" ? "LoRA" : model.type}: ${model.name}`;
+      const versionHelp = model.versions.map((version) => `${version.id}: ${version.name}`).join("\n");
+      const versions = await askText(
+        "Choose model versions",
+        `Enter comma-separated version IDs or “all”.\n\n${versionHelp}`,
+        draft.versionIds?.join(", ") || "all",
+        {
+          inputLabel: "Version IDs", maxLength: 1000, confirmLabel: "Use versions",
+          nativeMessage: `Choose model versions now. Enter comma-separated IDs or "all":\n${versionHelp}`,
         }
-      } catch (err) {
-        setStatus(`Could not find model ${draft.modelId}: ${err.message}`);
-        return;
-      }
-    }
-    if (draft.type === "collection") {
-      try {
-        setStatus(`Resolving collection ${draft.collectionId}…`);
-        const collection = await resolveCollection(draft.collectionId, config.settings);
-        if (String(collection.type).toLocaleLowerCase() !== "image") {
-          setStatus(`Collection ${draft.collectionId} contains ${collection.type || "unsupported"} items, not images.`);
+      );
+      if (versions === null) return;
+      if (versions.trim().toLocaleLowerCase() === "all" || !versions.trim()) delete draft.versionIds;
+      else {
+        const ids = [...new Set(versions.split(",").map((id) => Number(id.trim()))
+          .filter((id) => Number.isSafeInteger(id) && id > 0))];
+        if (ids.length === 0) {
+          setStatus("No valid model-version IDs were entered.");
           return;
         }
-        draft.label = `Collection: ${collection.name || `#${draft.collectionId}`}`;
-      } catch (err) {
-        setStatus(`Could not open collection ${draft.collectionId}: ${err.message}`);
-        return;
+        draft.versionIds = ids;
       }
-    }
-    const result = mergeSourceIntoFeed(feed(), draft);
-    if (result.status === "duplicate") {
-      setStatus(`${sourceLabel(draft)} is already in this hub.`);
+    } catch (err) {
+      setStatus(`Could not find model ${draft.modelId}: ${err.message}`);
       return;
     }
-    await saveConfig(config);
-    $("source-input").value = "";
-    renderHubs();
-    renderSources();
-    startFeed({ reason: "source-add" });
+  }
+  if (draft.type === "collection") {
+    try {
+      setStatus(`Resolving collection ${draft.collectionId}…`);
+      const collection = await resolveCollection(draft.collectionId, effectiveApiSettings());
+      if (String(collection.type).toLocaleLowerCase() !== "image") {
+        setStatus(`Collection ${draft.collectionId} contains ${collection.type || "unsupported"} items, not images.`);
+        return;
+      }
+      draft.label = `Collection: ${collection.name || `#${draft.collectionId}`}`;
+    } catch (err) {
+      setStatus(`Could not open collection ${draft.collectionId}: ${err.message}`);
+      return;
+    }
+  }
+  const result = mergeSourceIntoFeed(feed(), draft);
+  if (result.status === "duplicate") {
+    setStatus(`${sourceLabel(draft)} is already in this hub.`);
+    return;
+  }
+  await saveConfig(config);
+  $("source-input").value = "";
+  renderHubs();
+  renderSources();
+  startFeed({ reason: "source-add" });
+}
+
+function renderSourceSuggestions(suggestions) {
+  sourceSuggestions = suggestions;
+  activeSourceSuggestion = -1;
+  const list = $("source-suggestions");
+  list.replaceChildren();
+  suggestions.forEach((suggestion, index) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.id = `source-suggestion-${index}`;
+    option.className = "source-suggestion";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", "false");
+    if (suggestion.imageUrl) {
+      const image = document.createElement("img");
+      image.className = "source-suggestion-image";
+      image.src = suggestion.imageUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      option.append(image);
+    } else {
+      const fallback = document.createElement("span");
+      fallback.className = "source-suggestion-fallback";
+      fallback.textContent = suggestion.kind === "user" ? "@"
+        : suggestion.kind === "collection" ? "C" : "M";
+      option.append(fallback);
+    }
+    const copy = document.createElement("span");
+    copy.className = "source-suggestion-copy";
+    const primary = document.createElement("strong");
+    primary.textContent = suggestion.primary;
+    const secondary = document.createElement("small");
+    secondary.textContent = suggestion.secondary;
+    copy.append(primary, secondary);
+    option.append(copy);
+    option.addEventListener("pointerdown", (event) => event.preventDefault());
+    option.addEventListener("click", () => addSourceDraft(suggestion.draft));
+    list.append(option);
+  });
+  list.hidden = suggestions.length === 0;
+  $("source-input").setAttribute("aria-expanded", String(suggestions.length > 0));
+  $("source-search-status").textContent = suggestions.length > 0
+    ? `${suggestions.length} matching ${SOURCE_SEARCH_COPY[sourceSearchKind].noun}${suggestions.length === 1 ? "" : "s"}.`
+    : `No matching ${SOURCE_SEARCH_COPY[sourceSearchKind].noun}s found.`;
+}
+
+function scheduleSourceSearch() {
+  clearTimeout(sourceSearchTimer);
+  sourceSearchController?.abort();
+  sourceSearchController = null;
+  const query = $("source-input").value.trim();
+  const parsed = parseSourceInput(query);
+  const isCivitaiUrl = /^https?:\/\/(?:www\.)?civitai\.(?:com|red)\//i.test(query);
+  if (isCivitaiUrl && parsed) {
+    closeSourceSuggestions();
+    $("source-search-status").textContent = "Civitai link recognized. Press Add to continue.";
+    return;
+  }
+  if (/^\d+$/.test(query) && ["model", "collection"].includes(sourceSearchKind)) {
+    closeSourceSuggestions();
+    $("source-search-status").textContent = `Press Add to use this ${SOURCE_SEARCH_COPY[sourceSearchKind].noun} ID.`;
+    return;
+  }
+  if (query.length < SOURCE_SEARCH_MIN_LENGTH) {
+    closeSourceSuggestions();
+    $("source-search-status").textContent = query
+      ? `Type at least ${SOURCE_SEARCH_MIN_LENGTH} characters to search.` : "";
+    return;
+  }
+  const request = ++sourceSearchRequest;
+  $("source-search-status").textContent = `Searching ${SOURCE_SEARCH_COPY[sourceSearchKind].noun}s…`;
+  sourceSearchTimer = setTimeout(async () => {
+    const controller = new AbortController();
+    sourceSearchController = controller;
+    try {
+      const suggestions = await searchSourceSuggestions(
+        sourceSearchKind, query, effectiveApiSettings(), controller.signal
+      );
+      if (request !== sourceSearchRequest || controller.signal.aborted) return;
+      renderSourceSuggestions(suggestions);
+    } catch (error) {
+      if (error?.name === "AbortError" || request !== sourceSearchRequest) return;
+      closeSourceSuggestions();
+      $("source-search-status").textContent = `Search unavailable: ${error.message}`;
+    } finally {
+      if (sourceSearchController === controller) sourceSearchController = null;
+    }
+  }, SOURCE_SEARCH_DEBOUNCE_MS);
+}
+
+function draftFromSourceInput() {
+  const value = $("source-input").value.trim();
+  if (/^\d+$/.test(value) && sourceSearchKind === "collection") {
+    return { type: "collection", collectionId: Number(value) };
+  }
+  const parsed = parseSourceInput(value);
+  const isCivitaiUrl = /^https?:\/\/(?:www\.)?civitai\.(?:com|red)\//i.test(value);
+  if (parsed && (isCivitaiUrl || parsed.type === sourceSearchKind)) return parsed;
+  return null;
+}
+
+function selectSourceSearchKind(kind) {
+  sourceSearchKind = kind;
+  for (const tab of $("source-kind-tabs").querySelectorAll("[role=tab]")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.sourceKind === kind));
+  }
+  $("source-input").placeholder = SOURCE_SEARCH_COPY[kind].placeholder;
+  closeSourceSuggestions({ abort: true });
+  scheduleSourceSearch();
+}
+
+function bindAddSource() {
+  for (const tab of $("source-kind-tabs").querySelectorAll("[role=tab]")) {
+    tab.addEventListener("click", () => selectSourceSearchKind(tab.dataset.sourceKind));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = [...$("source-kind-tabs").querySelectorAll("[role=tab]")];
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      const next = tabs[(tabs.indexOf(tab) + direction + tabs.length) % tabs.length];
+      next.focus();
+      selectSourceSearchKind(next.dataset.sourceKind);
+    });
+  }
+  $("source-input").addEventListener("input", scheduleSourceSearch);
+  $("source-input").addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" && sourceSuggestions.length > 0) {
+      event.preventDefault();
+      setActiveSourceSuggestion(activeSourceSuggestion + 1);
+    } else if (event.key === "ArrowUp" && sourceSuggestions.length > 0) {
+      event.preventDefault();
+      setActiveSourceSuggestion(activeSourceSuggestion - 1);
+    } else if (event.key === "Escape") {
+      closeSourceSuggestions({ abort: true });
+    } else if (event.key === "Enter" && activeSourceSuggestion >= 0) {
+      event.preventDefault();
+      addSourceDraft(sourceSuggestions[activeSourceSuggestion].draft);
+    }
+  });
+  $("source-input").addEventListener("blur", () => {
+    setTimeout(() => closeSourceSuggestions(), 120);
+  });
+  $("add-source-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (activeSourceSuggestion >= 0) {
+      await addSourceDraft(sourceSuggestions[activeSourceSuggestion].draft);
+      return;
+    }
+    const draft = draftFromSourceInput();
+    if (!draft) {
+      setStatus(`Choose a matching ${SOURCE_SEARCH_COPY[sourceSearchKind].noun} from the suggestions, or paste its Civitai URL or ID.`);
+      return;
+    }
+    await addSourceDraft(draft);
   });
   $("remove-api-key").addEventListener("click", async () => {
     config.settings.apiKey = "";
@@ -3580,6 +4285,23 @@ async function importHubsFromFile(file, keepManagerOpen = false) {
     if (config.feeds.length + imported.length > MAX_HUBS) {
       throw new Error(`Import would exceed the ${MAX_HUBS}-hub limit`);
     }
+    const maturityCount = imported.filter((hub) => hub.savedBrowsingLevelsByDomain).length;
+    if (maturityCount > 0) {
+      const policy = await chooseFromList(
+        "Imported Civitai.red profiles",
+        `${maturityCount} imported hub${maturityCount === 1 ? " contains a" : "s contain"} Civitai.red content profile${maturityCount === 1 ? "" : "s"}. Choose whether to keep them.`,
+        [
+          { label: "Import without Civitai.red profiles (recommended)", value: "without" },
+          { label: "Import and keep Civitai.red profiles", value: "include" },
+          { label: "Cancel import", value: "cancel" },
+        ],
+        { nativeMessage: "1: Import without Civitai.red profiles\n2: Import and keep them\n3: Cancel import" }
+      );
+      if (!policy || policy === "cancel") return;
+      if (policy === "without") {
+        for (const hub of imported) delete hub.savedBrowsingLevelsByDomain;
+      }
+    }
     config.feeds.push(...imported);
     await switchHub(imported[imported.length - 1].id);
     const sourceCount = imported.reduce((total, hub) => total + hub.sources.length, 0);
@@ -3595,8 +4317,28 @@ async function importHubsFromFile(file, keepManagerOpen = false) {
   }
 }
 
+async function exportHubsWithMaturityChoice(hubs) {
+  const maturityCount = hubs.filter((hub) => hub.savedBrowsingLevelsByDomain).length;
+  if (maturityCount === 0) {
+    exportFeeds(hubs);
+    return;
+  }
+  const policy = await chooseFromList(
+    "Export Civitai.red profiles?",
+    `${maturityCount} selected hub${maturityCount === 1 ? " has a" : "s have"} Civitai.red content profile${maturityCount === 1 ? "" : "s"}. Profiles are omitted unless you explicitly include them.`,
+    [
+      { label: "Export without Civitai.red profiles (recommended)", value: "without" },
+      { label: "Include Civitai.red profiles in the export", value: "include" },
+      { label: "Cancel export", value: "cancel" },
+    ],
+    { nativeMessage: "1: Export without Civitai.red profiles\n2: Include Civitai.red profiles\n3: Cancel export" }
+  );
+  if (!policy || policy === "cancel") return;
+  exportFeeds(hubs, { includeMaturityProfiles: policy === "include" });
+}
+
 function bindShare() {
-  $("export").addEventListener("click", () => exportFeed(feed()));
+  $("export").addEventListener("click", () => exportHubsWithMaturityChoice([feed()]));
   $("import").addEventListener("click", () => $("import-file").click());
   $("import-file").addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -3619,6 +4361,7 @@ function sourceFetchSignature(source) {
 function feedFetchSignature(candidate) {
   const current = activeFeed(candidate);
   const scope = embeddedHost || "standalone";
+  const host = embeddedHost || candidate.settings.linkDomain;
   return JSON.stringify({
     activeFeedId: candidate.activeFeedId,
     // Labels, aliases, cached version names and source IDs do not change a
@@ -3627,10 +4370,14 @@ function feedFetchSignature(candidate) {
     sources: current.sources.map(sourceFetchSignature),
     globalSort: current.globalSort,
     period: current.period,
-    linkDomain: embeddedHost || candidate.settings.linkDomain,
+    linkDomain: host,
     apiKey: candidate.settings.apiKey,
     maxVersionsPerModel: candidate.settings.maxVersionsPerModel,
-    browsingLevels: candidate.settings.browsingLevelsByDomain?.[scope] || [],
+    browsingLevels: effectiveHubBrowsingLevels(
+      current,
+      host,
+      candidate.settings.browsingLevelsByDomain?.[scope] || []
+    ),
   });
 }
 
@@ -3655,6 +4402,16 @@ function feedPlaybackSignature(candidate) {
     activeFeedId: candidate.activeFeedId,
     autoplayVideos: current.autoplayVideos,
     autoplayAllVisibleVideos: current.autoplayAllVisibleVideos,
+  });
+}
+
+function maturityActivationSignature(candidate) {
+  const current = activeFeed(candidate);
+  const host = embeddedHost || candidate.settings.linkDomain;
+  return JSON.stringify({
+    activeFeedId: candidate.activeFeedId,
+    host,
+    savedLevels: savedBrowsingLevelsForHub(current, host),
   });
 }
 
@@ -3689,6 +4446,8 @@ async function reloadFromStorage({ area = "unknown", changedKeys = [] } = {}) {
   const fetchChanged = feedFetchSignature(fresh) !== feedFetchSignature(config);
   const displayChanged = feedDisplaySignature(fresh) !== feedDisplaySignature(config);
   const playbackChanged = feedPlaybackSignature(fresh) !== feedPlaybackSignature(config);
+  const maturityActivationChanged = maturityActivationSignature(fresh)
+    !== maturityActivationSignature(config);
   if (!feedsChanged && !activeFeedChanged && !defaultFeedChanged && !settingsChanged) {
     recordScrollDiagnostic("storage-reload-result", {
       area,
@@ -3710,6 +4469,7 @@ async function reloadFromStorage({ area = "unknown", changedKeys = [] } = {}) {
     fetchChanged,
     displayChanged,
     playbackChanged,
+    maturityActivationChanged,
     apiKeyChanged,
   });
   config = fresh;
@@ -3717,7 +4477,12 @@ async function reloadFromStorage({ area = "unknown", changedKeys = [] } = {}) {
   if (feedsChanged || activeFeedChanged || defaultFeedChanged) renderHubs();
   if (feedsChanged || activeFeedChanged) renderSources();
   syncFeedControls();
-  if (fetchChanged) startFeed({ reason: "storage-fetch-signature" });
+  if (maturityActivationChanged) {
+    const revision = ++hubActivationRevision;
+    await syncSavedMaturityForHub(feed(), revision);
+    if (revision !== hubActivationRevision) return;
+    startFeed({ reason: "storage-maturity-activation" });
+  } else if (fetchChanged) startFeed({ reason: "storage-fetch-signature" });
   else if (displayChanged) applyLocalFilters({
     preserveAnchor: true,
     reason: "storage-display-signature",
@@ -3867,6 +4632,7 @@ function bindSourceEditor() {
     bindLightbox();
     bindSourceEditor();
     bindSettings();
+    bindMaturityEditor();
     bindAddSource();
     bindBulkSources();
     bindShare();
@@ -3874,15 +4640,13 @@ function bindSourceEditor() {
       recoveredEventCount: scrollDiagnostics.length,
     });
     gridGeometryBaseline = gridMetrics();
-    startFeed({ reason: "initial-load" });
-    // Best-effort and asynchronous: the feed starts on the stored levels. If
-    // Civitai reports a change, advertise it without replacing a feed that the
-    // reader may already have scrolled through; Refresh applies it explicitly.
-    syncBrowsingLevelsFromCivitai().then((changed) => {
-      if (changed) browsingLevelRefreshPending = true;
-      renderBrowsingLevelNote();
-      watchCivitaiBrowsingLevel();
-    }).catch((error) => console.warn("Could not sync Civitai browsing levels", error));
+    // A saved profile is an activation rule: update Civitai first so the first
+    // request for this hub already uses the intended account setting. A hub
+    // without a profile simply reads and follows the current setting.
+    const revision = ++hubActivationRevision;
+    await syncSavedMaturityForHub(feed(), revision);
+    if (revision === hubActivationRevision) startFeed({ reason: "initial-load" });
+    watchCivitaiBrowsingLevel();
   } catch (error) {
     showStartupError(error);
   }

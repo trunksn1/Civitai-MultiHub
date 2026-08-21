@@ -864,6 +864,105 @@ function normalizeUsername(value) {
   return null;
 }
 
+function suggestionImageUrl(value) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "image.civitai.com"
+      ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function suggestionQuery(raw) {
+  return typeof raw === "string" ? raw.trim().slice(0, 100) : "";
+}
+
+// Search results are normalized into source drafts so the sidebar autocomplete
+// and the existing paste/ID flow converge before any source is saved. The
+// public users endpoint is used for Creators because it includes image-only
+// posters; /creators omits accounts that have not published a model.
+export async function searchSourceSuggestions(kind, rawQuery, settings, signal) {
+  const query = suggestionQuery(rawQuery);
+  if (!query) return [];
+  if (!["user", "model", "collection"].includes(kind)) {
+    throw new Error("Unsupported source search type");
+  }
+  const params = new URLSearchParams({ query, limit: "8" });
+  if (["model", "collection"].includes(kind)
+      && levelsFromMask(settings?.browsingLevel).some((level) => level > 2)) {
+    params.set("nsfw", "true");
+  }
+  const endpoint = kind === "user" ? "users" : `${kind}s`;
+  const data = await apiGet(
+    `${apiBase(settings)}/${endpoint}?${params}`,
+    settings,
+    signal,
+    0,
+    null,
+    (payload) => payload && Array.isArray(payload.items)
+  );
+
+  if (kind === "user") {
+    return data.items.flatMap((item) => {
+      const username = normalizeUsername(item);
+      if (!username || !/^[\w.-]+$/u.test(username)) return [];
+      return [{
+        kind,
+        key: `user:${username.toLocaleLowerCase()}`,
+        primary: `@${username}`,
+        secondary: "Creator",
+        imageUrl: null,
+        draft: { type: "user", username },
+      }];
+    }).slice(0, 8);
+  }
+
+  if (kind === "model") {
+    return data.items.flatMap((item) => {
+      const modelId = Number(item?.id);
+      const name = typeof item?.name === "string" ? item.name.trim() : "";
+      if (!Number.isSafeInteger(modelId) || modelId <= 0 || !name) return [];
+      const modelType = typeof item.type === "string" && item.type.trim()
+        ? item.type.trim() : "Model";
+      const username = normalizeUsername(item.creator);
+      const preview = (Array.isArray(item.modelVersions) ? item.modelVersions : [])
+        .flatMap((version) => Array.isArray(version?.images) ? version.images : [])
+        .find((image) => suggestionImageUrl(image?.url));
+      const displayType = modelType === "LORA" ? "LoRA" : modelType;
+      return [{
+        kind,
+        key: `model:${modelId}`,
+        primary: name,
+        secondary: [displayType, username ? `@${username}` : "", `#${modelId}`]
+          .filter(Boolean).join(" · "),
+        imageUrl: suggestionImageUrl(preview?.url),
+        draft: { type: "model", modelId, label: `${displayType}: ${name}` },
+      }];
+    }).slice(0, 8);
+  }
+
+  return data.items.flatMap((item) => {
+    const collectionId = Number(item?.id);
+    const name = typeof item?.name === "string" ? item.name.trim() : "";
+    if (!Number.isSafeInteger(collectionId) || collectionId <= 0 || !name
+        || String(item.type).toLocaleLowerCase() !== "image") return [];
+    const username = normalizeUsername(item.user);
+    const itemCount = Number(item.itemCount);
+    return [{
+      kind,
+      key: `collection:${collectionId}`,
+      primary: name,
+      secondary: ["Image collection", username ? `@${username}` : "",
+        Number.isFinite(itemCount) ? `${itemCount} items` : "", `#${collectionId}`]
+        .filter(Boolean).join(" · "),
+      imageUrl: suggestionImageUrl(item.coverImageUrl),
+      draft: { type: "collection", collectionId, label: `Collection: ${name}` },
+    }];
+  }).slice(0, 8);
+}
+
 function normalizeImage(item) {
   const modelVersionIds = [...new Set([
     ...(Array.isArray(item?.modelVersionIds) ? item.modelVersionIds : []),
@@ -887,12 +986,10 @@ export function maskFromLevels(levels) {
   return levels.reduce((mask, level) => mask | Number(level), 0);
 }
 
-// The maturity setting the user chose on the Civitai host they are browsing,
-// read from their own signed-in session on that host. This is the only direction
-// that exists: the level belongs to Civitai's own control, and the panel follows
-// it. MultiHub used to offer its own picker and write the level back through
-// `user.updateContentSettings`, which never reliably reached the site's already
-// hydrated page.
+// The maturity setting currently active on the Civitai host being browsed,
+// read from the user's signed-in session/settings cache. Hubs without a saved
+// profile follow it; intentionally saved profiles use the write helper below
+// before their feed starts.
 //
 // Civitai's BrowsingLevelProvider computes the effective level as
 // `showNsfw ? browsingLevel : PG`, so the "show mature content" master switch is
@@ -918,19 +1015,45 @@ export async function resolveAccountBrowsingLevels(settings, signal) {
 
   // getSettings is the fresher source for showNsfw; the session lags behind it.
   let showNsfw = payload.sessionShowNsfw;
+  let browsingLevel = payload.browsingLevel;
   if (payload.settingsPayload) {
     try {
       const decoded = unwrapTrpcData(payload.settingsPayload, null);
       if (typeof decoded?.showNsfw === "boolean") showNsfw = decoded.showNsfw;
+      const redLevel = Number(decoded?.redBrowsingLevel);
+      if (apiHost(settings) === "civitai.red" && Number.isSafeInteger(redLevel) && redLevel > 0) {
+        browsingLevel = redLevel;
+      }
     } catch {
       // Serializer changed; the session value still applies.
     }
   }
   if (showNsfw === false) return { levels: [1], reason: "nsfw-disabled" };
 
-  const levels = levelsFromMask(payload.browsingLevel);
+  const levels = levelsFromMask(browsingLevel);
   if (levels.length === 0) return { levels: null, reason: "no-level-in-session" };
   return { levels, reason: "inherited" };
+}
+
+// Apply an intentionally saved hub profile to the user's Civitai.red setting.
+// This is a single mutation: callers confirm an ambiguous
+// failure by reading the setting back rather than risking duplicate writes.
+export async function updateAccountBrowsingLevels(levels, settings, signal) {
+  if (apiHost(settings) !== "civitai.red") {
+    throw new CivitaiApiError("Hub content profiles are available only on civitai.red", {
+      code: "invalid-request",
+    });
+  }
+  const normalized = [...new Set((levels || []).map(Number))].sort((a, b) => a - b);
+  if (normalized.length === 0
+      || normalized.some((level) => !BROWSING_LEVEL_VALUES.includes(level))) {
+    throw new CivitaiApiError("At least one valid browsing level is required", {
+      code: "invalid-request",
+    });
+  }
+  const mask = maskFromLevels(normalized);
+  await sessionRequest("set-browsing-level", { browsingLevel: mask }, settings, signal, null);
+  return levelsFromMask(mask);
 }
 
 const API_SORT = {
